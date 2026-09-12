@@ -78,7 +78,7 @@ conversation, next-turn recovery, and multi-turn latency.
 
 ## Tests
 
-The integrated Python suite passes **371 tests** covering the provider, broker,
+The integrated Python suite passes **403 tests** covering the provider, broker,
 private voice library, local STT, agent adapters and fast mode on Python 3.12.
 The 22 broker ownership tests also passed on Python 3.11 and 3.13; the original
 provider previously passed its 103-test suite on all three versions.
@@ -95,6 +95,20 @@ Independent review found and corrected an expired-handle retry loop. A real
 browser test interrupted audition polling/cleanup for 75 seconds; after the
 completed result expired, restoring transport displayed the expiry message,
 discarded audio and released controls only after checking public backend status.
+
+The managed-launch/read-aloud pass adds ownership and service-control tests,
+deterministic prose extraction, mute, private Stop IPC and playback-error cleanup.
+On macOS, two Start commands reused one PID, graceful Stop produced exit code 0,
+and restart produced a new ready PID. A real managed LiveKit/Nemotron/Copilot/Qwen
+turn received nonzero audio in 4.546 seconds after synthetic speech ended; this
+single observation is not a latency comparison. Local narration played through
+the output device, rejected room admission during playback, stopped on request,
+and made no synthesis request while muted.
+The Codex 0.153.4 notification contract was checked against its exact upstream
+release. An exact-schema notification fixture exercised real local speech, and
+repeating its turn ID produced no second synthesis. This validates the bridge
+and payload handling; no additional Codex coding turn was requested solely to
+trigger the hook.
 
 New Studio sessions explicitly use local VAD turn detection and disable LiveKit
 speculative reasoning. Earlier one-off room timings above used inherited
@@ -154,6 +168,8 @@ Apache-2.0. Verify all artifact notices before redistributing binaries or weight
 The local Nemotron runtime is Apache-2.0 with third-party notices; the NVIDIA
 weights use the NVIDIA Open Model License. The roughly 700 MB model is
 downloaded only through explicit setup and is not included in Git or the wheel.
+Optional local narration uses SoundDevice 0.5.6 and PortAudio; preserve their MIT
+license notices when redistributing an application bundle.
 
 [Historical setup evidence](docs/validation-history.md) preserves the earlier
 cache-offload issue, approved restoration and runtime repair sequence. Those

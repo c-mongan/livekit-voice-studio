@@ -66,8 +66,12 @@ Conversations do: local speech does not make remote reasoning or LiveKit offline
 ## 5. Record, audition, then talk
 
 ```sh
-uv run --no-sync python -m examples.studio
+./studio start --open
 ```
+
+The command returns while macOS keeps the server running. Use `./studio status`
+to inspect it and `./studio stop` to request graceful shutdown.
+See [service ownership and recovery](launching.md).
 
 Open `http://127.0.0.1:8765`. In **Settings & voices**, record 5–30 seconds,
 verify the exact transcript and confirm permission. Save the voice, then generate

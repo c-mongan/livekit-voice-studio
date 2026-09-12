@@ -25,6 +25,7 @@ import wave
 from collections import deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -79,6 +80,8 @@ class OwnedSession:
     completed: float | None = None
     audition_message: str | None = None
     stop_ready: asyncio.Event = field(default_factory=asyncio.Event)
+    hold_playback: bool = False
+    playback_admitted: bool = False
 
 
 class Studio:
@@ -252,11 +255,15 @@ class Studio:
             self.audition.pcm.clear()
             self.audition = None
 
-    async def create_audition(self, voice_id: str, text: str) -> dict[str, Any]:
+    async def create_audition(
+        self, voice_id: str, text: str, *, hold_playback: bool = False
+    ) -> dict[str, Any]:
         if not isinstance(text, str) or not 1 <= len(text.strip()) <= 300:
             raise StudioError("Audition text must contain 1–300 characters.", 400)
         if not isinstance(voice_id, str):
             raise StudioError("Choose a saved voice.", 400)
+        if type(hold_playback) is not bool:
+            raise StudioError("holdPlayback must be a boolean.", 400)
         async with self.lock:
             require_idle(self)
             if os.environ.get("VOICEBOX_EXCLUSIVE") != "1":
@@ -274,6 +281,7 @@ class Studio:
                 key=secrets.token_urlsafe(32),
                 kind="audition",
                 voice_id=voice_id,
+                hold_playback=hold_playback,
             )
             self.audition = self.current = owned
             self.phase = "starting"
@@ -340,6 +348,7 @@ class Studio:
             raise StudioError("This tab no longer owns that audition.", 404)
         if (
             owned.completed is not None
+            and self.current is not owned
             and time.monotonic() - owned.completed > AUDITION_RESULT_SECONDS
         ):
             self.clear_audition()
@@ -360,7 +369,11 @@ class Studio:
 
     def audition_audio(self, identifier: str) -> bytes:
         owned = self.require_audition(identifier)
-        if owned.audition_state != "ready" or not owned.pcm or self.current is owned:
+        if (
+            owned.audition_state != "ready"
+            or not owned.pcm
+            or (self.current is owned and not owned.hold_playback)
+        ):
             raise StudioError("Generated audio is not available. Wait for completion or try again.")
         buffer = io.BytesIO()
         with wave.open(buffer, "wb") as output:
@@ -506,6 +519,17 @@ class Studio:
             owned.pcm.clear()
             if owned.audition_state == "generating":
                 owned.audition_state = "cancelled"
+            if (
+                owned.playback_admitted
+                and owned.finished
+                and owned.safe
+                and owned.process is not None
+                and owned.process.returncode == 0
+            ):
+                self.current = None
+                self.phase = "idle"
+                self.message = None
+                return
         if owned.end_task is None:
             if self.phase != "blocked":
                 self.phase = "draining"
@@ -686,8 +710,16 @@ class Studio:
                             if owned.audition_state != "ready":
                                 owned.pcm.clear()
                             self.message = None
-                        self.current = None
-                        self.phase = "idle"
+                        if owned.hold_playback and owned.audition_state == "ready":
+                            owned.playback_admitted = True
+                            self.phase = "active"
+                            self.message = (
+                                "Local read-aloud owns playback. "
+                                "Stop it before starting a conversation."
+                            )
+                        else:
+                            self.current = None
+                            self.phase = "idle"
                         self.fast_loaded = False
                         self._last_status_at = 0
                     else:
@@ -716,6 +748,7 @@ class Studio:
             await asyncio.sleep(5)
             if (
                 self.audition is not None
+                and self.current is not self.audition
                 and self.audition.completed is not None
                 and time.monotonic() - self.audition.completed > AUDITION_RESULT_SECONDS
             ):
@@ -837,9 +870,17 @@ async def audition_handler(request: web.Request) -> web.Response:
     studio = request.app[STUDIO]
     body = await request.json()
     if request.path == "/api/audition":
-        if not isinstance(body, dict) or set(body) != {"voiceId", "text"}:
+        if (
+            not isinstance(body, dict)
+            or not {"voiceId", "text"} <= set(body)
+            or set(body) - {"voiceId", "text", "holdPlayback"}
+        ):
             raise StudioError("Provide a saved voice and audition text.", 400)
-        return web.json_response(await studio.create_audition(body["voiceId"], body["text"]))
+        return web.json_response(
+            await studio.create_audition(
+                body["voiceId"], body["text"], hold_playback=body.get("holdPlayback", False)
+            )
+        )
     if (
         not isinstance(body, dict)
         or set(body) != {"auditionId"}
@@ -1097,6 +1138,7 @@ async def serve(args: argparse.Namespace) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--log-file", type=Path, help="Private rotating log for managed launch.")
     parser.add_argument(
         "--check",
         action="store_true",
@@ -1111,7 +1153,11 @@ def main() -> None:
     if not 1024 <= args.port <= 65535:
         parser.error("--port must be between 1024 and 65535.")
     load_dotenv(ROOT / ".env", override=False)
-    logging.basicConfig(level=logging.WARNING)
+    if args.log_file:
+        handler = RotatingFileHandler(args.log_file, maxBytes=256 * 1024, backupCount=1)
+        logging.basicConfig(level=logging.WARNING, handlers=[handler])
+    else:
+        logging.basicConfig(level=logging.WARNING)
     if args.check:
         studio = Studio(
             BackendLease(runtime_root(), os.environ.get("VOICEBOX_URL", "http://127.0.0.1:17493"))

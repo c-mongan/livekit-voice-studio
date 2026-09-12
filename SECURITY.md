@@ -30,3 +30,7 @@ development version is maintained.
   offline. Use account credentials and voices only with permission.
 - Keep dependencies and installed agent runtimes current, but revalidate their
   capabilities before trusting a changed runtime.
+- The optional Codex read-aloud notification is an explicitly configured host
+  command, not a sandboxed model tool. It does not change coding permissions,
+  but its argv payload can be visible to local process inspection. Do not enable
+  it for content that should not be spoken or exposed through that boundary.

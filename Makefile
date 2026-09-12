@@ -1,6 +1,15 @@
-.PHONY: studio studio-build studio-check test
+.PHONY: studio studio-status studio-stop studio-foreground studio-build studio-check test
 
 studio:
+	./studio start --open
+
+studio-status:
+	./studio status
+
+studio-stop:
+	./studio stop
+
+studio-foreground:
 	uv run --no-sync python -m examples.studio
 
 studio-build:

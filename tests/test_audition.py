@@ -325,3 +325,65 @@ async def test_silent_generated_audio_is_not_a_successful_audition(audition):
     await settle(broker, process)
     assert broker.audition_status(result["auditionId"])["state"] == "failed"
     assert not broker.audition.pcm
+
+
+async def test_narration_holds_admission_through_playback(audition, monkeypatch):
+    broker, voice, process = audition
+    result = await broker.create_audition(voice["id"], "Words.", hold_playback=True)
+    owner = broker.current
+    process.event(owner, "audition_audio", pcm=base64.b64encode(b"\x01\x00" * 480).decode())
+    await settle(broker, process)
+    assert broker.phase == "active"
+    assert broker.current is owner
+    assert not broker.lease.marker.exists(), "Inference drained; only playback admission is held."
+    assert broker.audition_audio(result["auditionId"])[:4] == b"RIFF"
+    with pytest.raises(StudioError):
+        await broker.create()
+    completed = owner.completed
+    monkeypatch.setattr(module.time, "monotonic", lambda: completed + 65)
+    assert broker.audition_status(result["auditionId"])["state"] == "ready"
+    await broker.end_audition(result["auditionId"])
+    assert broker.current is None
+    assert broker.phase == "idle"
+
+
+async def test_cancelled_narration_never_enters_playback_hold(audition):
+    broker, voice, process = audition
+    result = await broker.create_audition(voice["id"], "Words.", hold_playback=True)
+    owner = broker.current
+    await broker.end_audition(result["auditionId"])
+    await settle(broker, process)
+    await owner.end_task
+    assert broker.phase == "idle"
+    assert broker.current is None
+
+
+async def test_cancel_between_child_exit_and_monitor_confirmation_keeps_owner(audition):
+    broker, voice, process = audition
+    exited = asyncio.Event()
+    confirm = asyncio.Event()
+    original_wait = process.wait
+
+    async def delayed_wait():
+        code = await original_wait()
+        exited.set()
+        await confirm.wait()
+        return code
+
+    process.wait = delayed_wait
+    result = await broker.create_audition(voice["id"], "Words.", hold_playback=True)
+    owner = broker.current
+    process.event(owner, "finished", safe=True)
+    process.finish()
+    await exited.wait()
+    await broker.end_audition(result["auditionId"])
+    try:
+        assert broker.current is owner
+        assert broker.lease.marker.exists()
+    finally:
+        confirm.set()
+        await owner.monitor
+        if owner.end_task:
+            await owner.end_task
+    assert broker.phase == "idle"
+    assert not broker.lease.marker.exists()

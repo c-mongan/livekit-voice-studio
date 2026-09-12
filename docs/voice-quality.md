@@ -130,6 +130,7 @@ reasoning still uses the selected account's allowance or billing; conversations
 include context as well as the newest message. LiveKit has its own plan limits.
 
 Reading an already-generated agent reply aloud locally needs no second reasoning
-request. A future read-aloud extension can reuse the voice provider and ownership
-rules without giving the voice UI access to coding tools. That extension is not
-implemented here, and a prompt skill alone is not a persistent playback service.
+request. The [local narrator](read-aloud.md) implements that narrow path using the
+same provider and ownership rules, without coding-tool access. It speaks a bounded
+prose excerpt, not a fresh LLM answer. A general voice-controlled coding agent is
+not implemented, and a prompt skill alone is not a persistent playback service.

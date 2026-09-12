@@ -96,8 +96,12 @@ and explicitly warming an already cached voice model.
 ### 3. Start
 
 ```sh
-uv run --no-sync python -m examples.studio
+./studio start --open
 ```
+
+The command finishes; macOS manages the server independently of this chat.
+Use `./studio status` and `./studio stop` to inspect and stop it.
+See [launching and recovery](docs/launching.md); Linux retains `make studio-foreground`.
 
 Open **http://127.0.0.1:8765**. Start with text, or enable your microphone to speak.
 The microphone stays off until you choose to enable it.
@@ -243,6 +247,13 @@ costs and reproducible results. These small samples are not a promise for every 
 - The app binds to loopback. Do not expose this development token service to the
   internet; it is not a multi-user authenticated deployment.
 - Use voices only with permission. Valid audio does not prove speaker identity.
+
+## Read existing replies aloud
+
+The optional [local narrator](docs/read-aloud.md) reads a short spoken excerpt of
+an already-generated reply with your selected voice. It has Stop and mute,
+uses no extra reasoning request, and grants no coding-tool permissions.
+It is separate from the conversational Copilot/Codex adapters.
 
 ## If something goes wrong
 

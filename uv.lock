@@ -1023,6 +1023,9 @@ example = [
 mlx = [
     { name = "mlx-audio", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
 ]
+playback = [
+    { name = "sounddevice" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -1041,9 +1044,10 @@ requires-dist = [
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = "==7.0.0" },
     { name = "python-dotenv", marker = "extra == 'example'", specifier = "==1.2.3" },
     { name = "ruff", marker = "extra == 'dev'", specifier = "==0.14.10" },
+    { name = "sounddevice", marker = "extra == 'playback'", specifier = "==0.5.6" },
     { name = "soundfile", specifier = "==0.14.0" },
 ]
-provides-extras = ["dev", "example", "azure", "mlx", "agents"]
+provides-extras = ["dev", "example", "azure", "mlx", "agents", "playback"]
 
 [[package]]
 name = "livekit-protocol"

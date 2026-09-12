@@ -3,7 +3,7 @@
 Work in an isolated checkout. Use Python 3.11-3.13 and the committed `uv.lock`.
 
 ```sh
-uv sync --frozen --package livekit-plugins-voicebox --extra dev --extra example --extra azure --python 3.12
+uv sync --frozen --package livekit-plugins-voicebox --extra dev --extra example --extra azure --extra agents --python 3.12
 uv run --no-sync ruff check .
 uv run --no-sync ruff format --check .
 uv run --no-sync mypy
@@ -43,6 +43,9 @@ one LiveKit conversation. The installable provider remains independent of both.
 Use `make studio` after building the UI. Do not run the standalone example worker
 at the same time. The optional Vite dev server proxies to the local Studio API;
 the built UI is served directly by Python.
+On macOS this starts the user-managed service and returns. `make studio-stop`
+requests graceful shutdown. Use `make studio-foreground` when debugging in a
+terminal. Add the `playback` extra when exercising local read-aloud hardware.
 
 Before changing session lifecycle code, cover abandoned starts, concurrent tabs,
 lost heartbeats, safe drain, crashed workers and reconnects. A killed agent

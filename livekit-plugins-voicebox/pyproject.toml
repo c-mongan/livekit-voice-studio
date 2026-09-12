@@ -33,6 +33,7 @@ example = [
 azure = ["livekit-plugins-azure==1.8.1"]
 mlx = ["mlx-audio==0.5.3; sys_platform == 'darwin' and platform_machine == 'arm64'"]
 agents = ["github-copilot-sdk==1.0.13"]
+playback = ["sounddevice==0.5.6"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["livekit"]

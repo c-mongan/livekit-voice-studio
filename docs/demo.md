@@ -3,7 +3,7 @@
 ## Before showing it
 
 1. Run `uv run --no-sync python -m examples.studio --check`.
-2. Start `uv run --no-sync python -m examples.studio`.
+2. Start `./studio start --open`; the command should finish with a running status.
 3. Open `http://127.0.0.1:8765`.
 4. In Settings, use **Nemotron + Copilot Luna low** for the default demo.
 5. Start the session before speaking; the first connection prepares the model
@@ -12,6 +12,7 @@
 Voicebox itself can remain closed. Do not run the old standalone worker
 alongside Studio. Model downloads and native builds are separate setup steps,
 not part of the live demonstration.
+Use `./studio stop` when finished, not the Stop control on an old Copilot command card.
 
 ## A short, honest demonstration
 
