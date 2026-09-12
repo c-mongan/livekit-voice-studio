@@ -1,0 +1,12 @@
+[project]
+name = "voicebox-qwen-streaming-experiment"
+version = "0.0.0"
+description = "Isolated, opt-in benchmark of existing local Qwen weights"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "mlx-audio==0.5.3",
+    "soundfile==0.14.0",
+]
+
+[tool.uv]
+package = false

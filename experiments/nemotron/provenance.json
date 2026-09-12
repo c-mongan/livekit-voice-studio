@@ -1,0 +1,28 @@
+{
+  "runtime": {
+    "repository": "https://github.com/NVIDIA/NeMo-Speech.cpp",
+    "release": "v0.1.0",
+    "revision": "4f9676226f667d14608487df744f375db87127f8",
+    "license": "Apache-2.0 with third-party notices",
+    "preset": "cpu-asr",
+    "http": true,
+    "metal": false,
+    "cuda": false,
+    "vulkan": false,
+    "microphone_capture": false,
+    "build_jobs": 2
+  },
+  "dependencies": {
+    "sentencepiece": "17d7580d6407802f85855d2cc9190634e2c95624",
+    "ggml": "c03b4e2bcece5134827881af90242086daf75be5",
+    "cpp-httplib": "62d899feac3cf9215a55f2b43da250fdd98d2156"
+  },
+  "model": {
+    "repository": "https://huggingface.co/nvidia/nemotron-speech-streaming-en-0.6b",
+    "revision": "ebe59e5a817142986528bbbee5dba8db7b38ed50",
+    "artifact": "nemotron-speech-streaming-en-0.6b.q8_0.gguf",
+    "bytes": 699872960,
+    "sha256": "d9a01898d2a611c8764e23a1c2f45e70bbd5a425dc4de93692ac951dd603812d",
+    "license": "https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/"
+  }
+}

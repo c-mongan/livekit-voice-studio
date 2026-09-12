@@ -1,0 +1,9 @@
+[project]
+name = "voicebox-nemotron-native-build"
+version = "0.0.0"
+description = "Isolated CPU-only native Nemotron build tools; no Python inference runtime"
+requires-python = ">=3.11"
+dependencies = ["cmake==3.31.6", "ninja==1.11.1.4"]
+
+[tool.uv]
+package = false

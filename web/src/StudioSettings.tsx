@@ -1,0 +1,146 @@
+import { useEffect, useRef, useState } from 'react';
+import { api, errorMessage, studioRequest, type LocalVoice, type StudioConfig, type StudioStatus, type VoiceLibrary } from './api';
+import { VoiceEnrollment } from './VoiceEnrollment';
+import { useVoiceAudition } from './useVoiceAudition';
+import { VoiceAudition } from './VoiceAudition';
+
+const presets: Record<string, { model: string; effort: string }> = {
+  copilot: { model: 'gpt-5.6-luna', effort: 'low' }, codex: { model: 'gpt-5.6-luna', effort: 'low' },
+  azure: { model: 'gpt-4.1-nano', effort: '' }, openai: { model: 'gpt-4.1-mini', effort: '' },
+};
+
+export function StudioSettings({ locked, onChanged, status, onAuditionBusy }: {
+  locked: boolean; onChanged: () => void | Promise<void>; status?: StudioStatus | null;
+  onAuditionBusy?: (busy: boolean) => void;
+}) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const [open, setOpen] = useState(false);
+  const [tab, setTab] = useState<'providers' | 'voices'>('providers');
+  const [config, setConfig] = useState<StudioConfig | null>(null);
+  const [library, setLibrary] = useState<VoiceLibrary | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState('');
+  const [enrolling, setEnrolling] = useState(false);
+  const [deleting, setDeleting] = useState<LocalVoice | null>(null);
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [name, setName] = useState('');
+  const [preview, setPreview] = useState<string | null>(null);
+  const [focusedVoice, setFocusedVoice] = useState<string | null>(null);
+  const audition = useVoiceAudition(onAuditionBusy, onChanged);
+  const request = useRef(0);
+  const inFlight = useRef(false);
+  const disabled = locked || busy || loading || audition.busy;
+  const unavailable = locked || (!audition.busy && status?.phase !== 'idle')
+    ? 'End the conversation and wait for cleanup before generating a sample.' : null;
+  async function load() {
+    const id = ++request.current;
+    setLoading(true); setError(null);
+    try {
+      const [settings, voices] = await Promise.all([api<StudioConfig>('settings'), api<VoiceLibrary>('voices')]);
+      if (request.current !== id) return;
+      setConfig(settings); setLibrary(voices);
+    } catch (cause) { if (request.current === id) setError(errorMessage(cause, 'Configuration could not be loaded. Check the local server and retry.')); }
+    finally { if (request.current === id) setLoading(false); }
+  }
+  useEffect(() => {
+    if (open) { dialog.current?.showModal(); void load(); }
+    return () => { request.current++; };
+  }, [open]);
+  useEffect(() => {
+    if (locked) {
+      if (audition.busy || audition.url) audition.cancel();
+      setEnrolling(false); setDeleting(null); setRenaming(null); setPreview(null);
+    }
+  }, [locked, audition.cancel, audition.busy, audition.url]);
+  function close() {
+    if (inFlight.current) return;
+    audition.cancel();
+    setOpen(false); setEnrolling(false); setPreview(null); setFocusedVoice(null); setDeleting(null); setRenaming(null); setNotice('');
+    dialog.current?.close(); trigger.current?.focus();
+  }
+  async function mutate(action: () => Promise<unknown>, success: string) {
+    if (disabled || inFlight.current) return;
+    audition.cancel();
+    inFlight.current = true; setBusy(true); setError(null); setNotice('');
+    try { await action(); setNotice(success); setDeleting(null); setRenaming(null); await load(); await onChanged(); }
+    catch (cause) { setError(errorMessage(cause, 'The change could not be saved. Check the local server and retry.')); }
+    finally { inFlight.current = false; setBusy(false); }
+  }
+  const switchTab = (next: 'providers' | 'voices') => { if (!enrolling) { audition.cancel(); setFocusedVoice(null); setTab(next); setPreview(null); setDeleting(null); } };
+  return <>
+    <div className="setup-entry"><button className="button secondary settings-trigger" ref={trigger} onClick={() => setOpen(true)}>Settings & voices</button>{!locked && <span className="field-help">{audition.busy ? 'Local audition running · other changes paused' : 'Record → audition → choose → chat'}</span>}</div>
+    <dialog className="settings-drawer" ref={dialog} aria-labelledby="settings-title" onCancel={(event) => { event.preventDefault(); close(); }}>
+      {open && <>
+        <header className="drawer-header"><div><h2 id="settings-title">Make it yours</h2><p>Providers and private voices</p></div><button className="button quiet" disabled={busy} onClick={close} aria-label="Close settings">Close</button></header>
+        <div className="drawer-tabs" role="tablist" aria-label="Studio configuration" onKeyDown={(event) => {
+          if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key) && !enrolling) {
+            event.preventDefault();
+            const next = event.key === 'Home' ? 'providers' : event.key === 'End' ? 'voices' : tab === 'providers' ? 'voices' : 'providers';
+            switchTab(next); document.getElementById(`tab-${next}`)?.focus();
+          }
+        }}>
+          {(['providers', 'voices'] as const).map((value) => <button key={value} className="button quiet" id={`tab-${value}`} role="tab" aria-selected={tab === value} aria-controls={`panel-${value}`} tabIndex={tab === value ? 0 : -1} disabled={enrolling} onClick={() => switchTab(value)}>{value === 'providers' ? 'Providers' : 'Voices'}</button>)}
+        </div>
+        <div className="drawer-body">
+          {locked && <p className="notice warning">End the conversation and wait for cleanup before changing settings or recording a voice.</p>}
+          {audition.busy && !focusedVoice && <p className="notice warning" role="status">Finishing the audition before other changes can continue. {audition.error || 'Waiting for local worker cleanup.'}</p>}
+          {audition.error && !audition.busy && !focusedVoice && <p className="notice error" role="alert">{audition.error}</p>}
+          {error && <div className="notice error" role="alert"><p>{error}</p><button className="button quiet" disabled={busy} onClick={() => void load()}>Retry</button></div>}
+          {notice && <p className="save-notice" role="status">{notice}</p>}
+          {loading && <p className="loading-line" role="status">Loading local configuration...</p>}
+          {tab === 'providers' && config && <section role="tabpanel" id="panel-providers" aria-labelledby="tab-providers">
+            <h3 className="drawer-section-title">The path from speech to reply</h3>
+            <p className="field-help">Changes apply to the next session. Credentials stay on the server.</p>
+            <fieldset disabled={disabled} className="provider-fields">
+              <label className="field">Speech recognition<select value={config.sttProvider} onChange={(event) => setConfig({ ...config, sttProvider: event.target.value })}>{config.providers.stt.map((provider) => <option key={provider.id} value={provider.id} disabled={!provider.available}>{provider.label}{!provider.available ? ' - unavailable' : ''}</option>)}</select></label>
+              <p className="route-note">{config.sttProvider === 'nemotron' ? 'Local recognition. Microphone audio is transcribed on this machine.' : 'Cloud recognition. Microphone audio is sent to your selected speech provider.'}</p>
+              {config.providers.stt.filter((provider) => !provider.available).map((provider) => <p className="field-help" key={provider.id}>{provider.label}: {provider.reason || 'Not available on this server.'}</p>)}
+              <label className="field">Reasoning provider<select value={config.llmProvider} onChange={(event) => {
+                const provider = event.target.value; const preset = presets[provider];
+                if (preset) setConfig({ ...config, llmProvider: provider, llmModel: preset.model, reasoningEffort: preset.effort, codexRestrictedApproved: false });
+              }}>{config.providers.llm.map((provider) => <option key={provider.id} value={provider.id} disabled={!provider.available || !presets[provider.id]}>{provider.label}{!provider.available ? ' - unavailable' : ''}</option>)}</select></label>
+              <div className="model-summary"><span>Remote model</span><strong>{config.llmModel}</strong>{config.reasoningEffort && config.reasoningEffort !== 'none' && <span>Reasoning effort: {config.reasoningEffort}</span>}</div>
+              <p className="route-note">Conversation text goes to this provider. Copilot and Codex use remote models, not local inference. Runtime availability is checked when connecting.</p>
+              {config.llmProvider === 'codex' && <label className="consent"><input type="checkbox" checked={config.codexRestrictedApproved === true} onChange={(event) => setConfig({ ...config, codexRestrictedApproved: event.target.checked })} /><span>I accept restricted Codex: commands are limited to a private workspace and minimal runtime files, command networking and external tools are disabled, and my global Codex instructions are trusted. This is not tool-free mode.</span></label>}
+              {config.providers.llm.filter((provider) => !provider.available).map((provider) => <p className="field-help" key={provider.id}>{provider.label}: {provider.reason || 'Not available on this server.'}</p>)}
+              <div className="local-synthesis"><strong>Speech synthesis stays local</strong><p>Your selected voice is used by Qwen on this machine. The reference recording is not sent to LiveKit or your reasoning provider.</p></div>
+              <button className="button primary" disabled={disabled || (config.llmProvider === 'codex' && !config.codexRestrictedApproved) || !config.providers.stt.find((p) => p.id === config.sttProvider)?.available || !config.providers.llm.find((p) => p.id === config.llmProvider)?.available} onClick={() => void mutate(() => api('settings', { sttProvider: config.sttProvider, llmProvider: config.llmProvider, llmModel: config.llmModel, reasoningEffort: config.reasoningEffort, codexRestrictedApproved: config.codexRestrictedApproved === true }), 'Settings saved for the next session.')}>{busy ? 'Saving...' : 'Save settings'}</button>
+            </fieldset>
+            <p className="privacy-footnote">LiveKit still transports conversation audio and text between this browser and the agent. Local speech recognition does not make the entire conversation local.</p>
+          </section>}
+          {tab === 'voices' && library && <section role="tabpanel" id="panel-voices" aria-labelledby="tab-voices">
+            {enrolling ? <VoiceEnrollment guidedText={library.guidedText} locked={locked} onCancel={() => setEnrolling(false)} onSaved={async (voice) => { setEnrolling(false); setFocusedVoice(voice.id); setNotice('Private voice saved. Generate a sample below to hear the clone, then choose it for chat.'); await load(); await onChanged(); }} /> : <>
+              <div className="section-title"><h3 className="drawer-section-title">Your voice library</h3><span className="local-badge">On this machine</span></div>
+              <p className="field-help">Record a reference, hear new speech in that voice, then choose it for chat. Your current conversation never changes mid-sentence.</p>
+              <details className="voice-readiness"><summary>What you need for an audition</summary><p className="field-help">{unavailable || 'A saved voice and a local Qwen model. Generate sample checks model and hardware availability on this machine; setup issues appear here with next steps.'}</p><p className="field-help">{status?.ready ? 'Conversation setup is ready.' : 'Chat has separate requirements: LiveKit plus your selected speech and reasoning providers. You can audition locally without those credentials.'}</p></details>
+              <ul className="voice-library">{library.voices.map((voice) => <li key={voice.id}>
+                <div className="voice-row-heading"><strong>{voice.name}</strong>{voice.selected && <span className="selected-badge">Next session</span>}</div>
+                <p className="field-help">{voice.durationSeconds.toFixed(1)} s reference · Private local WAV</p>
+                <div className="voice-row-actions">
+                  <button className="button secondary" disabled={disabled || voice.selected} onClick={() => void mutate(() => api('settings', { voiceId: voice.id }), `${voice.name} selected for the next session.`)}>{voice.selected ? 'Selected' : 'Use next session'}</button>
+                  <button className="button secondary" aria-label={`${focusedVoice === voice.id ? 'Hide audition' : 'Audition clone'} of ${voice.name}`} aria-expanded={focusedVoice === voice.id} disabled={busy || locked} onClick={() => { audition.cancel(); setPreview(null); setFocusedVoice(focusedVoice === voice.id ? null : voice.id); }}>{focusedVoice === voice.id ? 'Hide audition' : 'Audition clone'}</button>
+                  <button className="button quiet" aria-label={`${preview === voice.id ? 'Hide original recording' : 'Original recording'} of ${voice.name}`} aria-expanded={preview === voice.id} disabled={busy || locked || audition.busy} onClick={() => { audition.cancel(); setFocusedVoice(null); setPreview(preview === voice.id ? null : voice.id); }}>{preview === voice.id ? 'Hide original' : 'Original recording'}</button>
+                  <button className="button quiet" disabled={disabled} onClick={() => { setRenaming(voice.id); setName(voice.name); }}>Rename</button>
+                  <button className="button quiet danger-text" disabled={disabled || voice.selected} title={voice.selected ? 'Select another voice before deleting this one.' : undefined} onClick={() => setDeleting(voice)}>Delete</button>
+                </div>
+                {preview === voice.id && <div className="original-preview"><p className="field-help">Original recording · the saved reference, not generated speech.</p><audio className="voice-preview" aria-label={`Original recording of ${voice.name}`} src={`/api/voices/${encodeURIComponent(voice.id)}/audio`} controls controlsList="nodownload" preload="none" onError={() => setError('This reference could not be played. Check the local server or try another voice.')} /></div>}
+                {focusedVoice === voice.id && <VoiceAudition key={voice.id} voice={voice} audition={audition} unavailable={unavailable} choosing={disabled} onClose={() => { audition.cancel(); setFocusedVoice(null); }} onChoose={() => void mutate(() => api('settings', { voiceId: voice.id }), `${voice.name} selected. Close settings, then start a session to chat.`)} />}
+                {renaming === voice.id && <form className="rename-form" onSubmit={(event) => { event.preventDefault(); if (name.trim()) void mutate(() => studioRequest(`voices/${encodeURIComponent(voice.id)}`, { method: 'PATCH', body: { name: name.trim() } }), 'Voice renamed.'); }}>
+                  <label className="field">New voice name<input autoFocus required maxLength={80} value={name} disabled={disabled} onChange={(event) => setName(event.target.value)} /></label>
+                  <button className="button secondary" disabled={disabled || !name.trim()}>Save name</button><button className="button quiet" type="button" onClick={() => setRenaming(null)}>Cancel rename</button>
+                </form>}
+              </li>)}</ul>
+              {!library.voices.length && <p className="empty-library">No private voices yet. Record a short passage to create your first voice.</p>}
+              {deleting && <div className="delete-confirmation" role="group" aria-label="Confirm voice deletion"><strong>Delete {deleting.name}?</strong><p>This removes its private reference from this machine. This cannot be undone.</p><button className="button secondary danger-text" disabled={disabled} onClick={() => void mutate(() => studioRequest(`voices/${encodeURIComponent(deleting.id)}`, { method: 'DELETE', body: { confirm: true } }), 'Voice deleted.')}>Delete voice permanently</button><button className="button quiet" onClick={() => setDeleting(null)}>Keep voice</button></div>}
+              <button className="button primary" disabled={disabled} onClick={() => { audition.cancel(); setFocusedVoice(null); setPreview(null); setEnrolling(true); setNotice(''); }}>Record a voice</button>
+              <p className="privacy-footnote">Only record yourself or someone who has given permission. New recordings stay in memory until saved to your local server.</p>
+            </>}
+          </section>}
+        </div>
+      </>}
+    </dialog>
+  </>;
+}

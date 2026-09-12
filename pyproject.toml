@@ -1,0 +1,44 @@
+[tool.uv.workspace]
+members = ["livekit-plugins-voicebox"]
+exclude = ["experiments/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+markers = ["integration: explicitly authorized local Voicebox synthesis"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+explicit_package_bases = true
+mypy_path = "livekit-plugins-voicebox"
+files = [
+    "livekit-plugins-voicebox/livekit/plugins/voicebox",
+    "examples/minimal_agent.py",
+    "benchmarks/benchmark_tts.py",
+    "benchmarks/conversation_stats.py",
+    "examples/studio.py",
+    "examples/studio_worker.py",
+    "examples/audition_worker.py",
+    "examples/backend_lease.py",
+    "examples/fast_qwen.py",
+    "examples/voice_bundle.py",
+    "examples/studio_library.py",
+    "examples/agent_llm.py",
+    "examples/nemotron_stt.py",
+    "examples/nemotron_service.py",
+    "tools/setup_nemotron.py",
+]
+
+[[tool.mypy.overrides]]
+module = "soundfile"
+ignore_missing_imports = true

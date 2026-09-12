@@ -1,0 +1,34 @@
+{
+  "date": "2026-09-11",
+  "platform": "macOS Apple Silicon",
+  "runtime_version": "nemo-speech 0.1.0",
+  "runtime_revision": "4f9676226f667d14608487df744f375db87127f8",
+  "build": "CPU ASR + HTTP; no CUDA/Metal/Vulkan, no microphone; two build jobs",
+  "build_tool_replay": "passed; no work to do on second build",
+  "model_bytes": 699872960,
+  "model_sha256": "d9a01898d2a611c8764e23a1c2f45e70bbd5a425dc4de93692ac951dd603812d",
+  "checksum_verified": true,
+  "source_build_and_model_disk_mib_approx": 810,
+  "readiness": {
+    "ready": true,
+    "capabilities": ["asr"],
+    "device": "cpu"
+  },
+  "native_smoke": {
+    "input": "one second of generated PCM16 mono 16 kHz silence",
+    "events": ["recognition_usage"],
+    "usage_seconds": 1.0,
+    "wall_seconds": 0.181,
+    "commit_acknowledged": true,
+    "speech_accuracy_test": false,
+    "real_room_latency_test": false,
+    "microphone_used": false,
+    "qwen_inference_used": false
+  },
+  "unit_tests": {"passed": 32, "seconds": 1.69},
+  "ruff": "passed",
+  "mypy": "passed; adapter, setup and smoke modules",
+  "port": 8766,
+  "sidecar_status_after_test": "stopped",
+  "native_artifacts": "experiments/nemotron/.native (gitignored; not bundled)"
+}
