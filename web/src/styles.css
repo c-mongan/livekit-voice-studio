@@ -115,6 +115,8 @@ h2 { font-size: .9375rem; line-height: 1.4; font-weight: 650; }
 .metrics { margin: 10px 0; }
 .metrics dd { font-variant-numeric: tabular-nums; }
 .metric-note { font-size: .6875rem; color: var(--muted); line-height: 1.6; margin-top: 4px; }
+.latency-details { padding-top: 8px; }
+.latency-details summary { cursor: pointer; min-height: 44px; padding-block: 12px; font-size: .8125rem; font-weight: 600; }
 .about { margin-top: 24px; border-top: 1px solid var(--line); padding-top: 8px; }
 .about summary { cursor: pointer; min-height: 44px; padding-top: 12px; font-size: .8125rem; font-weight: 600; }
 .about-body p { color: var(--muted); font-size: .75rem; line-height: 1.65; margin-top: 12px; }
@@ -124,6 +126,7 @@ h2 { font-size: .9375rem; line-height: 1.4; font-weight: 650; }
 .setup-entry { display: flex; align-items: center; gap: 8px 16px; flex-wrap: wrap; margin-bottom: 12px; }
 .setup-entry .settings-trigger { margin-bottom: 0; }
 .setup-entry > .field-help { font-size: .75rem; }
+.library-record-action { margin-top: 16px; }
 .voice-readiness { margin-top: 12px; font-size: .8125rem; }
 .voice-readiness summary { min-height: 44px; padding-block: 12px; cursor: pointer; font-weight: 600; }
 .voice-readiness p + p { margin-top: 8px; }

@@ -86,20 +86,16 @@ Token-free probes against installed Codex 0.153.4 confirmed:
   viable restriction: even a harmless executable aborted. Minimum runtime
   support cannot be omitted and still described as a working command sandbox.
 
-Normal-auth thread startup reports an unowned `AGENTS.md`
-instruction source even with zero project-document budget, empty developer
-instructions, a supplied base prompt, disabled host skill discovery, and
-disabled plugin/hook features. A follow-up with `project_root_markers=[]`
-confirmed that source belongs to the normal global Codex configuration, not
-the application repository or private workspace.
+Normal-auth thread startup can inherit global `AGENTS.md` instructions despite
+an empty project-document budget and disabled host discovery features.
+Preflight must distinguish trusted global configuration from repository or
+workspace instruction sources; those settings alone do not establish isolation.
 
-The first exploratory MCP status query exceeded the probe's 64-KiB transport line limit.
-A follow-up with a bounded 1-MiB line limit confirmed **20 configured servers,
-14 advertising tools, and 259 tools**, despite `mcp_servers={}`, `plugins={}`,
-and the disabled feature flags. Thus an empty map does not remove the inherited
-external capability set in this runtime/configuration. Only counts were
-reported; no server names, configuration secrets, instruction contents, or
-tool outputs were printed. No inference followed these probes.
+Empty `mcp_servers={}` and `plugins={}` maps and disabled feature flags do not
+remove inherited external capabilities in this runtime. Discovery uses bounded
+transport messages and must reject incomplete listings rather than assume that
+an empty configuration means no tools are available. Do not publish local
+server inventories, configuration secrets, instruction contents, or tool outputs.
 
 **Explicit named overrides resolved that MCP restriction.** The adapter lists
 public server/plugin names, stops its discovery process, then launches a new

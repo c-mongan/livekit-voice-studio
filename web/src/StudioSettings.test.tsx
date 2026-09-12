@@ -26,6 +26,38 @@ function button(text: string) {
   return element;
 }
 async function click(text: string) { await act(async () => button(text).click()); }
+it('opens the voice library directly without a microphone request or mutation', async () => {
+  expect(fetchMock).not.toHaveBeenCalled();
+  await click('Voice library');
+  expect(host.querySelector('[role=tab][aria-selected=true]')?.textContent).toBe('Voices');
+  expect(host.querySelector('#panel-providers')).toBeNull();
+  expect(button('Record a voice').disabled).toBe(false);
+  expect(button('Record a voice').compareDocumentPosition(host.querySelector('.voice-library')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(fetchMock.mock.calls.every(([, init]) => init.method === 'GET')).toBe(true);
+  await click('Close');
+  expect(document.activeElement).toBe(button('Voice library'));
+});
+it('keeps provider settings directly accessible and returns focus to their own trigger', async () => {
+  await click('Settings');
+  expect(host.querySelector('[role=tab][aria-selected=true]')?.textContent).toBe('Providers');
+  const dialog = host.querySelector('dialog')!;
+  await act(async () => dialog.dispatchEvent(new Event('cancel', { cancelable: true })));
+  expect(dialog.open).toBe(false);
+  expect(document.activeElement).toBe(button('Settings'));
+  await click('Voice library');
+  expect(host.querySelector('[role=tab][aria-selected=true]')?.textContent).toBe('Voices');
+});
+it('orders voice-first tabs with keyboard navigation and a single tab stop', async () => {
+  await click('Voice library');
+  const tabs = host.querySelector('[role=tablist]')!;
+  expect([...tabs.querySelectorAll('[role=tab]')].map((tab) => tab.textContent)).toEqual(['Voices', 'Providers']);
+  for (const [key, id] of [['End', 'providers'], ['Home', 'voices'], ['ArrowRight', 'providers'], ['ArrowLeft', 'voices']]) {
+    await act(async () => tabs.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })));
+    expect(document.activeElement?.id).toBe(`tab-${id}`);
+    expect(tabs.querySelector('[aria-selected=true]')?.id).toBe(`tab-${id}`);
+    expect(tabs.querySelectorAll('[tabindex="0"]')).toHaveLength(1);
+  }
+});
 beforeEach(async () => {
   locked = false;
   status = { ...readyStatus };
@@ -43,7 +75,7 @@ beforeEach(async () => {
   await act(async () => render());
 });
 it('offers generated audition separately from the original recording with accessible explicit playback', async () => {
-  await click('Settings & voices'); await click('Voices');
+  await click('Voice library');
   const original = [...host.querySelectorAll('button')].find((item) => item.textContent === 'Original recording')!;
   await act(async () => original.click());
   const audio = host.querySelector('audio')!;
@@ -62,7 +94,7 @@ it('offers generated audition separately from the original recording with access
 it('allows local auditions without LiveKit or reasoning credentials', async () => {
   status = { ...status, ready: false, livekit: { configured: false }, problems: ['Configure LiveKit and reasoning.'] };
   await act(async () => render());
-  await click('Settings & voices'); await click('Voices');
+  await click('Voice library');
   await act(async () => [...host.querySelectorAll('button')].find((item) => item.textContent === 'Audition clone')!.click());
   expect(button('Generate sample').disabled).toBe(false);
   expect(host.textContent).toContain('without those credentials');
@@ -70,13 +102,13 @@ it('allows local auditions without LiveKit or reasoning credentials', async () =
 it.each(['starting', 'active', 'draining', 'blocked'] as const)('does not generate while the broker phase is %s', async (phase) => {
   status = { ...status, phase };
   await act(async () => render());
-  await click('Settings & voices'); await click('Voices');
+  await click('Voice library');
   await act(async () => [...host.querySelectorAll('button')].find((item) => item.textContent === 'Audition clone')!.click());
   expect(button('Generate sample').disabled).toBe(true);
   expect(host.textContent).toContain('wait for cleanup');
 });
 it('lets the backend validate local setup and shows its actionable 503 error', async () => {
-  await click('Settings & voices'); await click('Voices');
+  await click('Voice library');
   await act(async () => [...host.querySelectorAll('button')].find((item) => item.textContent === 'Audition clone')!.click());
   expect(button('Generate sample').disabled).toBe(false);
   fetchMock.mockResolvedValueOnce(new Response('{"message":"Install the local Qwen model first."}', { status: 503 }));
@@ -88,7 +120,7 @@ it('lets the backend validate local setup and shows its actionable 503 error', a
 it('revokes generated audio on text edit, voice switch and close without autoplay', async () => {
   URL.createObjectURL = vi.fn(() => 'blob:generated');
   URL.revokeObjectURL = vi.fn();
-  await click('Settings & voices'); await click('Voices');
+  await click('Voice library');
   await act(async () => [...host.querySelectorAll('button')].find((item) => item.textContent === 'Audition clone')!.click());
   fetchMock.mockImplementation(async (url: string) => url.endsWith('/audio')
     ? new Response(new Blob(['wav']), { headers: { 'Content-Type': 'audio/wav' } })
@@ -116,7 +148,7 @@ it('revokes generated audio on text edit, voice switch and close without autopla
 });
 it('locks other mutations immediately and ends a pending audition when the drawer closes', async () => {
   const pending = deferred<Response>();
-  await click('Settings & voices'); await click('Voices');
+  await click('Voice library');
   await act(async () => [...host.querySelectorAll('button')].find((item) => item.textContent === 'Audition clone')!.click());
   fetchMock.mockImplementationOnce(() => pending.promise);
   await click('Generate sample');
@@ -134,11 +166,11 @@ it('shows invalidated cleanup on reopening the drawer instead of leaving it busy
   fetchMock.mockImplementation((url: string) => url === '/api/audition' ? start.promise
     : url.endsWith('/end') ? Promise.resolve(new Response('{"message":"Invalid handle."}', { status: 404 }))
       : initial(url));
-  await click('Settings & voices'); await click('Voices');
+  await click('Voice library');
   await act(async () => [...host.querySelectorAll('button')].find((item) => item.textContent === 'Audition clone')!.click());
   await click('Generate sample'); await click('Close');
   await act(async () => start.resolve(new Response('{"auditionId":"expired","voiceId":"one","phase":"starting"}')));
-  await click('Settings & voices');
+  await click('Voice library');
   expect(host.querySelector('[role=alert]')?.textContent).toContain('expired or was invalidated');
   expect(button('Record a voice').disabled).toBe(false);
   expect(fetchMock.mock.calls.filter(([url]) => url.endsWith('/end'))).toHaveLength(1);
@@ -146,13 +178,13 @@ it('shows invalidated cleanup on reopening the drawer instead of leaving it busy
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.unstubAllGlobals(); });
 it('loads configuration only on demand, never asks for the microphone on mount', async () => {
   expect(fetchMock).not.toHaveBeenCalled();
-  await click('Settings & voices');
+  await click('Settings');
   expect(host.textContent).toContain('Remote model');
   expect(host.querySelector('option[value=azure]')?.hasAttribute('disabled')).toBe(true);
   expect(host.textContent).toContain('Not configured');
 });
 it('saves only allowed configuration fields with a CSRF header', async () => {
-  await click('Settings & voices');
+  await click('Settings');
   await click('Save settings');
   const call = fetchMock.mock.calls.find(([, init]) => init.method === 'POST')!;
   expect(call[0]).toBe('/api/settings');
@@ -161,7 +193,7 @@ it('saves only allowed configuration fields with a CSRF header', async () => {
   expect(changed).toHaveBeenCalled();
 });
 it('requires explicit restricted Codex consent and resets it when the provider changes', async () => {
-  await click('Settings & voices');
+  await click('Settings');
   const select = host.querySelectorAll('select')[1];
   await act(async () => { select.value = 'codex'; select.dispatchEvent(new Event('change', { bubbles: true })); });
   expect(host.textContent).toContain('This is not tool-free mode');
@@ -177,7 +209,7 @@ it('requires explicit restricted Codex consent and resets it when the provider c
 it('blocks all configuration mutations while a session is active', async () => {
   locked = true;
   await act(async () => render());
-  await click('Settings & voices');
+  await click('Settings');
   expect(button('Save settings').disabled).toBe(true);
   await click('Voices');
   expect(button('Record a voice').disabled).toBe(true);
@@ -185,7 +217,7 @@ it('blocks all configuration mutations while a session is active', async () => {
   expect(host.textContent).toContain('End the conversation');
 });
 it('never deletes automatically and requires explicit confirmation for an unselected voice', async () => {
-  await click('Settings & voices'); await click('Voices');
+  await click('Voice library');
   const deletes = [...host.querySelectorAll<HTMLButtonElement>('button')].filter((item) => item.textContent === 'Delete');
   expect(deletes[0].disabled).toBe(true);
   await act(async () => deletes[1].click());
@@ -196,7 +228,7 @@ it('never deletes automatically and requires explicit confirmation for an unsele
   expect(JSON.parse(call[1].body)).toEqual({ confirm: true });
 });
 it('keeps failed saves visibly unsuccessful without exposing raw diagnostics', async () => {
-  await click('Settings & voices');
+  await click('Settings');
   fetchMock.mockResolvedValueOnce(new Response('{"message":"End the active session first."}', { status: 409 }));
   await click('Save settings');
   expect(host.querySelector('[role=alert]')?.textContent).toContain('End the active session first');

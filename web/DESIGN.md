@@ -9,7 +9,9 @@ and visual direction; no design interview or generated imagery is needed.
 
 The primary job is to start one owned session and converse by text or voice.
 Text must remain useful without microphone permission. Server readiness and
-measured timings are diagnostic context, not marketing claims.
+measured timings are diagnostic context, not marketing claims. Measured latency
+uses a closed-by-default native disclosure; connection and setup status stay
+visible without expanding diagnostics.
 
 Assumptions: one local owner/browser session at a time. The settings drawer
 changes allowlisted providers and private voice selection only while idle;
@@ -57,12 +59,16 @@ than reducing touch-target sizes or hiding the privacy disclosure.
 - Keyboard Enter sends; Shift+Enter inserts a newline; IME composition is
   respected. Native focus, checkbox, details, textarea and button semantics
   support keyboard access. Transcript auto-follow stops when the user scrolls up.
+  Empty transcripts start at the top so onboarding guidance is not clipped;
+  clearing history resets that position and resumes following new messages.
 
 ## Settings and private voices
 
-One native modal drawer keeps the conversation surface compact. Providers and
-Voices use keyboard-addressable tabs, a pinned heading/close control, and a
-scrolling body. Escape returns focus to the trigger and discards unsaved voice
+One native modal drawer keeps the conversation surface compact. **Voice library**
+opens directly to Voices; the quieter **Settings** action opens Providers.
+Voices comes first in the keyboard-addressable tabs, with a pinned heading/close
+control and a scrolling body. Escape returns focus to the specific opening
+trigger and discards unsaved voice
 audio. Desktop uses a 520px drawer; mobile uses the full viewport width.
 No nested cards, decorative waves or new fonts are introduced.
 
@@ -86,7 +92,9 @@ Deletion requires confirmation and cannot remove the currently selected voice.
 ### Reference → generated audition → chat
 
 The compact entry names the real sequence without adding a second onboarding
-screen. Voices progressively disclose local readiness and one inline audition
+screen. Recording and its permission disclosure precede saved voices, so adding
+a reference does not require scrolling past the library. Voices progressively
+disclose local readiness and one inline audition
 at a time. A saved reference opens its audition, not a new modal. Exact-transcript
 guidance and recording-quality advice use the existing field-help treatment.
 

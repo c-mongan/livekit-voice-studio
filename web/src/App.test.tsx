@@ -86,10 +86,25 @@ afterEach(async () => {
   await act(async () => root.unmount());
   host.remove();
   vi.useRealTimers();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
 describe('typed-first and keyboard interaction', () => {
+  it('keeps measured latency in an optional native disclosure without hiding setup status', async () => {
+    await mount();
+    const summary = [...host.querySelectorAll('summary')].find((item) => item.textContent === 'Measured latency')!;
+    expect(summary).toBeDefined();
+    const details = summary.closest('details')!;
+    expect(details.open).toBe(false);
+    expect(details.textContent).toContain('LLM first token');
+    expect(details.textContent).toContain('Not an end-to-end response-time estimate');
+    await click(summary);
+    expect(details.open).toBe(true);
+    expect(host.querySelector('.session-status')?.closest('details')).toBeNull();
+    await click(summary);
+    expect(details.open).toBe(false);
+  });
   it.each(['starting', 'active', 'draining', 'blocked'] as const)('keeps a refreshed %s backend protected after audition ownership loss', async (phase) => {
     vi.useFakeTimers();
     const ownedStatus = deferred<Response>();
@@ -110,7 +125,7 @@ describe('typed-first and keyboard interaction', () => {
     await mount();
     await click(host.querySelector('input[type=checkbox]')!);
     await type('Hello.');
-    await click(button('Settings & voices')); await click(button('Voices')); await click(button('Audition clone'));
+    await click(button('Voice library')); await click(button('Audition clone'));
     await click(button('Generate sample'));
     await act(async () => ownedStatus.resolve(new Response('{"message":"Expired."}', { status: 410 })));
     expect(mocks.studio.refresh).toHaveBeenCalledTimes(1);
@@ -145,7 +160,7 @@ describe('typed-first and keyboard interaction', () => {
     await click(host.querySelector('input[type=checkbox]')!);
     await type('Hello.');
     expect(button('Start session').disabled).toBe(false);
-    await click(button('Settings & voices')); await click(button('Voices')); await click(button('Audition clone'));
+    await click(button('Voice library')); await click(button('Audition clone'));
     await click(button('Generate sample'));
     expect(button('Start session').disabled).toBe(true);
     expect(button('Start & send').disabled).toBe(true);
@@ -386,6 +401,44 @@ describe('microphone, playback and lifecycle controls', () => {
 });
 
 describe('truthful transcript and accessible visual state', () => {
+  it('keeps overflowing empty-state guidance at the top on initial render', async () => {
+    vi.spyOn(Element.prototype, 'scrollHeight', 'get').mockReturnValue(280);
+    vi.spyOn(Element.prototype, 'clientHeight', 'get').mockReturnValue(100);
+    await mount();
+    const transcript = host.querySelector<HTMLElement>('.transcript')!;
+    expect(transcript.querySelector('h3')?.textContent).toBe('Make room for a good conversation.');
+    expect(transcript.scrollTop).toBe(0);
+  });
+  it('resets cleared history to the top and resumes following new messages', async () => {
+    mocks.chat.messages = [{ id: 'old', type: 'agentTranscript', message: 'Previous reply', timestamp: 1 }];
+    await mount();
+    const transcript = host.querySelector<HTMLElement>('.transcript')!;
+    Object.defineProperties(transcript, { scrollHeight: { value: 400 }, clientHeight: { value: 100 } });
+    transcript.scrollTop = 80;
+    await act(async () => transcript.dispatchEvent(new Event('scroll', { bubbles: true })));
+    await click(button('Clear transcript'));
+    expect(transcript.scrollTop).toBe(0);
+    expect(transcript.querySelector('.empty-conversation')).not.toBeNull();
+    await act(async () => transcript.dispatchEvent(new Event('scroll', { bubbles: true })));
+    await act(async () => {
+      mocks.chat.messages = [...mocks.chat.messages, { id: 'new', type: 'agentTranscript', message: 'New reply', timestamp: 2 }];
+      render();
+    });
+    expect(transcript.scrollTop).toBe(400);
+  });
+  it('does not move a reader who scrolled up in nonempty conversation history', async () => {
+    mocks.chat.messages = [{ id: 'first', type: 'agentTranscript', message: 'First reply', timestamp: 1 }];
+    await mount();
+    const transcript = host.querySelector<HTMLElement>('.transcript')!;
+    Object.defineProperties(transcript, { scrollHeight: { value: 400 }, clientHeight: { value: 100 } });
+    transcript.scrollTop = 80;
+    await act(async () => transcript.dispatchEvent(new Event('scroll', { bubbles: true })));
+    await act(async () => {
+      mocks.chat.messages = [...mocks.chat.messages, { id: 'second', type: 'agentTranscript', message: 'Second reply', timestamp: 2 }];
+      render();
+    });
+    expect(transcript.scrollTop).toBe(80);
+  });
   it('defaults to complete-WAV Voicebox behavior when optional backend fields are absent', async () => {
     await mount();
     expect(host.querySelector('.pipeline li:last-child p')?.textContent).toBe('Voicebox · on this machine');

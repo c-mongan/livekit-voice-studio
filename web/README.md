@@ -100,7 +100,9 @@ an assertion that the entire conversation stays on the machine.
 
 ## Provider settings and voice enrollment
 
-Open **Settings & voices** for two compact tabs. Settings load from
+Open **Voice library** to record, audition, and choose a private voice, or
+**Settings** to change providers. Both open the same drawer, with Voices first
+and keyboard-accessible tabs. Settings load from
 `GET /api/settings`; updates send allowlisted fields to `POST /api/settings`.
 Speech recognition supports Nemotron, Azure and OpenAI as advertised by the
 server. Reasoning presets are Copilot/Codex `gpt-5.6-luna` with `low` effort,

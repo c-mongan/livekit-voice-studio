@@ -16,7 +16,7 @@ export function StudioSettings({ locked, onChanged, status, onAuditionBusy }: {
   const dialog = useRef<HTMLDialogElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
-  const [tab, setTab] = useState<'providers' | 'voices'>('providers');
+  const [tab, setTab] = useState<'providers' | 'voices'>('voices');
   const [config, setConfig] = useState<StudioConfig | null>(null);
   const [library, setLibrary] = useState<VoiceLibrary | null>(null);
   const [loading, setLoading] = useState(false);
@@ -70,19 +70,28 @@ export function StudioSettings({ locked, onChanged, status, onAuditionBusy }: {
     finally { inFlight.current = false; setBusy(false); }
   }
   const switchTab = (next: 'providers' | 'voices') => { if (!enrolling) { audition.cancel(); setFocusedVoice(null); setTab(next); setPreview(null); setDeleting(null); } };
+  function openDrawer(next: 'providers' | 'voices', source: HTMLButtonElement) {
+    trigger.current = source;
+    setTab(next);
+    setOpen(true);
+  }
   return <>
-    <div className="setup-entry"><button className="button secondary settings-trigger" ref={trigger} onClick={() => setOpen(true)}>Settings & voices</button>{!locked && <span className="field-help">{audition.busy ? 'Local audition running · other changes paused' : 'Record → audition → choose → chat'}</span>}</div>
+    <div className="setup-entry">
+      <button className="button secondary settings-trigger" aria-haspopup="dialog" onClick={(event) => openDrawer('voices', event.currentTarget)}>Voice library</button>
+      <button className="button quiet settings-trigger" aria-haspopup="dialog" onClick={(event) => openDrawer('providers', event.currentTarget)}>Settings</button>
+      {!locked && <span className="field-help">{audition.busy ? 'Local audition running · other changes paused' : 'Record → audition → choose → chat'}</span>}
+    </div>
     <dialog className="settings-drawer" ref={dialog} aria-labelledby="settings-title" onCancel={(event) => { event.preventDefault(); close(); }}>
       {open && <>
         <header className="drawer-header"><div><h2 id="settings-title">Make it yours</h2><p>Providers and private voices</p></div><button className="button quiet" disabled={busy} onClick={close} aria-label="Close settings">Close</button></header>
         <div className="drawer-tabs" role="tablist" aria-label="Studio configuration" onKeyDown={(event) => {
           if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key) && !enrolling) {
             event.preventDefault();
-            const next = event.key === 'Home' ? 'providers' : event.key === 'End' ? 'voices' : tab === 'providers' ? 'voices' : 'providers';
+            const next = event.key === 'Home' ? 'voices' : event.key === 'End' ? 'providers' : tab === 'providers' ? 'voices' : 'providers';
             switchTab(next); document.getElementById(`tab-${next}`)?.focus();
           }
         }}>
-          {(['providers', 'voices'] as const).map((value) => <button key={value} className="button quiet" id={`tab-${value}`} role="tab" aria-selected={tab === value} aria-controls={`panel-${value}`} tabIndex={tab === value ? 0 : -1} disabled={enrolling} onClick={() => switchTab(value)}>{value === 'providers' ? 'Providers' : 'Voices'}</button>)}
+          {(['voices', 'providers'] as const).map((value) => <button key={value} className="button quiet" id={`tab-${value}`} role="tab" aria-selected={tab === value} aria-controls={`panel-${value}`} tabIndex={tab === value ? 0 : -1} disabled={enrolling} onClick={() => switchTab(value)}>{value === 'providers' ? 'Providers' : 'Voices'}</button>)}
         </div>
         <div className="drawer-body">
           {locked && <p className="notice warning">End the conversation and wait for cleanup before changing settings or recording a voice.</p>}
@@ -114,7 +123,9 @@ export function StudioSettings({ locked, onChanged, status, onAuditionBusy }: {
           {tab === 'voices' && library && <section role="tabpanel" id="panel-voices" aria-labelledby="tab-voices">
             {enrolling ? <VoiceEnrollment guidedText={library.guidedText} locked={locked} onCancel={() => setEnrolling(false)} onSaved={async (voice) => { setEnrolling(false); setFocusedVoice(voice.id); setNotice('Private voice saved. Generate a sample below to hear the clone, then choose it for chat.'); await load(); await onChanged(); }} /> : <>
               <div className="section-title"><h3 className="drawer-section-title">Your voice library</h3><span className="local-badge">On this machine</span></div>
-              <p className="field-help">Record a reference, hear new speech in that voice, then choose it for chat. Your current conversation never changes mid-sentence.</p>
+              <p className="field-help">Record a reference → audition generated speech → choose your voice for chat.</p>
+              <div className="library-record-action"><button className="button primary" disabled={disabled} onClick={() => { audition.cancel(); setFocusedVoice(null); setPreview(null); setEnrolling(true); setNotice(''); }}>Record a voice</button></div>
+              <p className="privacy-footnote">Only record yourself or someone who has given permission. New recordings stay in memory until saved to your local server.</p>
               <details className="voice-readiness"><summary>What you need for an audition</summary><p className="field-help">{unavailable || 'A saved voice and a local Qwen model. Generate sample checks model and hardware availability on this machine; setup issues appear here with next steps.'}</p><p className="field-help">{status?.ready ? 'Conversation setup is ready.' : 'Chat has separate requirements: LiveKit plus your selected speech and reasoning providers. You can audition locally without those credentials.'}</p></details>
               <ul className="voice-library">{library.voices.map((voice) => <li key={voice.id}>
                 <div className="voice-row-heading"><strong>{voice.name}</strong>{voice.selected && <span className="selected-badge">Next session</span>}</div>
@@ -135,8 +146,6 @@ export function StudioSettings({ locked, onChanged, status, onAuditionBusy }: {
               </li>)}</ul>
               {!library.voices.length && <p className="empty-library">No private voices yet. Record a short passage to create your first voice.</p>}
               {deleting && <div className="delete-confirmation" role="group" aria-label="Confirm voice deletion"><strong>Delete {deleting.name}?</strong><p>This removes its private reference from this machine. This cannot be undone.</p><button className="button secondary danger-text" disabled={disabled} onClick={() => void mutate(() => studioRequest(`voices/${encodeURIComponent(deleting.id)}`, { method: 'DELETE', body: { confirm: true } }), 'Voice deleted.')}>Delete voice permanently</button><button className="button quiet" onClick={() => setDeleting(null)}>Keep voice</button></div>}
-              <button className="button primary" disabled={disabled} onClick={() => { audition.cancel(); setFocusedVoice(null); setPreview(null); setEnrolling(true); setNotice(''); }}>Record a voice</button>
-              <p className="privacy-footnote">Only record yourself or someone who has given permission. New recordings stay in memory until saved to your local server.</p>
             </>}
           </section>}
         </div>

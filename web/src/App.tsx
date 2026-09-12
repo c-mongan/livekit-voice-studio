@@ -48,8 +48,8 @@ function Pipeline({ status, online }: { status: StudioStatus | null; online: boo
         <div><dt>LiveKit</dt><dd>{!online ? 'Unknown' : status?.livekit.configured ? 'Configured' : 'Not configured'}</dd></div>
       </dl>
     </section>
-    <section className="inspector-section">
-      <h3>Measured latency</h3>
+    <details className="inspector-section latency-details">
+      <summary>Measured latency</summary>
       <p className="metric-note">Latest server-reported generation</p>
       <dl className="detail-list metrics">
         <div><dt>LLM first token</dt><dd>{measuredSeconds(status?.metrics.llmFirstTokenSeconds)}</dd></div>
@@ -57,7 +57,7 @@ function Pipeline({ status, online }: { status: StudioStatus | null; online: boo
         <div><dt>Generated audio</dt><dd>{measuredSeconds(status?.metrics.ttsAudioSeconds)}</dd></div>
       </dl>
       <p className="metric-note">Not an end-to-end response-time estimate.</p>
-    </section>
+    </details>
     <details className="about">
       <summary>How it works</summary>
       <div className="about-body">
@@ -121,7 +121,14 @@ function Workspace({ studio, setMuted }: { studio: Studio; setMuted: (muted: boo
   }, [chat.messages, session.room]);
 
   useEffect(() => {
-    if (follow.current && scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    const transcript = scrollRef.current;
+    if (!transcript) return;
+    if (!messages.length) {
+      transcript.scrollTop = 0;
+      follow.current = true;
+    } else if (follow.current) {
+      transcript.scrollTop = transcript.scrollHeight;
+    }
   }, [messages]);
 
   const send = useCallback(async (text: string) => {
@@ -272,7 +279,7 @@ function Workspace({ studio, setMuted }: { studio: Studio; setMuted: (muted: boo
           <div className="transcript-heading"><h2>Conversation</h2><button className="button quiet clear-button" disabled={!messages.length} onClick={clearTranscript}>Clear transcript</button></div>
           <div className="transcript" ref={scrollRef} role="log" aria-label="Conversation messages" aria-live="polite" aria-relevant="additions text" tabIndex={0} onScroll={(event) => {
             const element = event.currentTarget;
-            follow.current = element.scrollHeight - element.scrollTop - element.clientHeight < 64;
+            follow.current = !messages.length || element.scrollHeight - element.scrollTop - element.clientHeight < 64;
           }}>
             {messages.length === 0 ? <div className="empty-conversation"><span className="empty-symbol" aria-hidden="true">“</span><h3>Make room for a good conversation.</h3><p>Ask a question below, or start a session and turn on your microphone. Your words and the agent’s replies will appear here.</p><button className="text-link" onClick={() => { setDraft('Explain how this voice pipeline works.'); composer.current?.focus(); }}>Try “Explain how this voice pipeline works” <span aria-hidden="true">↗</span></button></div> :
               messages.map((message) => <article className={`message message-${message.role}`} key={message.id}><div className="message-meta"><strong>{message.role === 'you' ? 'You' : 'Voicebox'}</strong><time dateTime={new Date(message.timestamp).toISOString()}>{new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time></div><p>{message.message}</p></article>)}

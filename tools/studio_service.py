@@ -261,6 +261,7 @@ def main() -> None:
     parser.add_argument(
         "action",
         choices=(
+            "doctor",
             "start",
             "status",
             "stop",
@@ -283,6 +284,12 @@ def main() -> None:
         help="Recovery only: explicitly confirm the inference backend was stopped/restarted.",
     )
     args = parser.parse_args()
+    if args.action == "doctor":
+        sys.dont_write_bytecode = True
+        from tools.studio_doctor import main as doctor_main
+
+        doctor_main(ROOT, json_output=args.json)
+        return
     if platform.system() != "Darwin":
         parser.error(
             "Managed launch currently supports macOS. Use make studio-foreground on Linux."

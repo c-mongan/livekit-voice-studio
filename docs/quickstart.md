@@ -7,7 +7,12 @@ that is a planning margin, not a runtime memory requirement.
 
 ## 1. Install the application
 
-From the repository root:
+Clone the source, then install its locked dependencies:
+
+```sh
+git clone https://github.com/c-mongan/livekit-voice-studio.git
+cd livekit-voice-studio
+```
 
 ```sh
 uv sync --frozen --package livekit-plugins-voicebox \
@@ -50,6 +55,12 @@ platform and filesystem; these are disk observations, not peak RAM measurements.
 ## 4. Configure this machine
 
 Copy `.env.example` to `.env` only if you do not already have one. Keep it private.
+For a new checkout:
+
+```sh
+test -e .env || (umask 077; cp .env.example .env)
+```
+
 Set `VOICEBOX_TTS_BACKEND=mlx`, the Qwen snapshot path and the Nemotron executable
 and model paths from its guide. Stop competing generation jobs, then explicitly
 set `VOICEBOX_EXCLUSIVE=1`.
@@ -59,9 +70,22 @@ sign in to Copilot CLI, then verify your account offers Luna with low reasoning.
 The [agent-provider guide](agent-providers.md) covers supported versions and
 restrictions. Azure or OpenAI can be configured instead; there is no automatic
 fallback. Codex requires separate restricted-agent consent.
+The preset was tested with the installed account/runtime combination, not every
+subscription. If your account lacks it, choose a supported configured Azure or
+OpenAI option rather than assuming the preset is universally available.
 
 Voice recording and local generated auditions do not need cloud credentials.
 Conversations do: local speech does not make remote reasoning or LiveKit offline.
+
+Check the local setup without starting services or contacting providers:
+
+```sh
+./studio doctor
+```
+
+Missing checks include a concrete next action. A missing voice is expected before
+recording; account access and loaded-model readiness remain explicitly unverified.
+See [doctor's checks and limits](launching.md#read-only-first-run-doctor).
 
 ## 5. Record, audition, then talk
 

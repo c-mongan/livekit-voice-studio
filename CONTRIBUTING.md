@@ -17,6 +17,9 @@ npm --prefix web run build
 
 Tests create WAVs and loopback aiohttp servers in memory. They do not require
 Voicebox, a GPU, microphone, cloud credentials, or model downloads.
+For a machine-readable functional report, run
+`uv run --no-sync python -m tools.evaluate`.
+See [evaluation](docs/evaluation.md) before enabling any live measurements.
 
 Keep changes atomic: profile snapshots, decode limits, cancellation/drain
 ownership, error mapping, and audio emission form one provider contract.

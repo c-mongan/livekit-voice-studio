@@ -60,6 +60,7 @@ Voicebox API 0.5.0 and its reported MLX/MPS backend.
 | Explicit VAD, no speculative LLM; five synthetic turns in one room | 3.440 / 3.110 / 2.878 / 3.177 / 3.628 s after speech ended; median 3.177 s, slowest 3.628 s |
 | Local generated audition | Real non-silent WAV, immediate cancel, successful retry and one-shot delivery passed; no settings change |
 | Updated browser workflow | Synthetic enrollment and deletion; generated 3.84 s WAV with explicit playback; cancellation and typed reply → Stop → next reply passed |
+| Structured spoken evaluation, three turns | 6.412 / 3.137 / 3.605 s; median 3.605 s, slowest 6.412 s; local VAD, Nemotron, Copilot and Qwen |
 
 The room checks counted nonzero PCM samples, not just the presence of an audio
 track or silence packets. No listener-side audio recording was written.
@@ -72,19 +73,32 @@ These are small, exploratory samples. There is no p90 claim, approved release
 threshold, production capacity claim, or assertion that a warm model always
 responds quickly.
 
+The structured three-turn evaluation repeated one stock synthetic phrase in
+the configured room. All requested turns passed; the slower first observation
+is retained rather than removed. It is a separate run from the five-turn sample,
+not an optimization comparison. The report includes source-modified state and
+package versions; no response recording or input fixture was retained.
+
 **Still requiring human validation:** microphone speech recognition, speaker
 identity, audible interruption-to-silence, absence of stale playback in a real
 conversation, next-turn recovery, and multi-turn latency.
 
 ## Tests
 
-The integrated Python suite passes **403 tests** covering the provider, broker,
+The integrated Python suite passes **453 tests** covering the provider, broker,
 private voice library, local STT, agent adapters and fast mode on Python 3.12.
 The 22 broker ownership tests also passed on Python 3.11 and 3.13; the original
 provider previously passed its 103-test suite on all three versions.
-Frontend type checking, production build and **160 tests** passed. These include
+Frontend type checking, production build and **167 tests** passed. These include
 typed-first startup, microphone denial, ownership loss, stop acknowledgements,
 late connection cancellation and transcript safety.
+
+A fresh sanitized clone installed the locked Python/frontend dependencies and
+passed offline tests, type checks and builds without a `.env`, reference bundle,
+or model download. This was a second checkout on the same Mac, not independent
+validation on somebody else's hardware. The read-only doctor also passed
+isolated-home, no-network/no-write tests: fresh installs report missing setup
+without creating a voice library or claiming account authentication.
 
 The quality pass adds generated-audition lifecycle tests: exclusive admission,
 voice snapshots, owner-only access, one-time audio delivery, expiry, cancellation
@@ -171,6 +185,6 @@ downloaded only through explicit setup and is not included in Git or the wheel.
 Optional local narration uses SoundDevice 0.5.6 and PortAudio; preserve their MIT
 license notices when redistributing an application bundle.
 
-[Historical setup evidence](docs/validation-history.md) preserves the earlier
-cache-offload issue, approved restoration and runtime repair sequence. Those
-historical blockers are not the current setup requirements.
+[Earlier validation evidence](docs/validation-history.md) records readiness
+methods, measured results, artifact provenance and licensing boundaries.
+Those validation milestones are not the current setup requirements.

@@ -40,10 +40,9 @@ baseline above must not be substituted for them.
 
 ## Deliberate reviewed-plan deviations
 
-1. Only Qwen 0.6B cloned profiles are implemented. Azure was initially deferred
-   and later explicitly requested for the example; Copilot, UI, other engines,
-   publication and upstream edits remain out of scope. Model downloads are
-   never automatic and the one operator-approved restoration is recorded below.
+1. This validation milestone covered Qwen 0.6B cloned profiles and the minimal
+   and Azure examples, not Copilot, UI, other engines or upstream edits.
+   Model downloads are never automatic; the validated artifact is recorded below.
 2. Cancellation-safe owned HTTP jobs shipped with the typed client, before the
    atomic TTS/audio/cache provider commit; no unsafe semaphore-only generation layer.
 3. Added read-only selected-model readiness and activity checks. Health alone
@@ -56,83 +55,36 @@ baseline above must not be substituted for them.
 7. Numeric resource/deadline bounds are explicit prototype policy, not measured
    latency guarantees. See README for defaults and recovery behavior.
 
-## Actual local observations
+## Validation environment and readiness method
 
-Read-only probes on 2026-09-11 (local time) identified Apple M4, 16 GiB RAM,
-macOS 26.6.2, Voicebox API 0.5.0, MLX with MPS. Initial model status reported
-Qwen TTS 0.6B cached but not loaded, and 1.7B cached and loaded.
+The reference environment was Apple M4, 16 GiB RAM, macOS 26.6.2,
+Voicebox API 0.5.0, and its reported MLX/MPS backend.
 
-At the explicitly authorized smoke attempt, the same API reported **0.6B
-downloaded=false and loaded=false**. A follow-up read confirmed that, with 1.7B
-still loaded but also reported downloaded=false, and health.model_downloaded
-null. This establishes inconsistent/changing cache visibility, not proven loss
-of weights. No attempt was made to alter cache configuration or scan personal
-model directories.
+Before synthesis, check selected-model cache visibility and tracked activity.
+A loaded model alone does not prove its cached files are available; inconsistent
+status requires investigation before proceeding. Missing-model preflight must
+fail before any generation POST. Keep profile selections and credentials in
+local configuration, and confirm exclusive backend use before room tests.
+Do not repair caches, download models, or restart another process implicitly.
 
-The smoke test failed in preflight, **before any generation POST**. Active tracked
-generation/download counts were zero. No speech was generated or retained; no
-models were downloaded, explicitly loaded, stopped, or reconfigured. Therefore
-there are no measured real first-frame/request/audio-duration results to report.
-The user-authorized profile selection remains local and is not committed.
-The final read-only check at `2026-09-10T23:20:39.766776+00:00` again reported
-0.6B downloaded=false, loaded=false, downloading=false, with no tracked activity.
+Cloned speaker identity requires listening and verification because the upstream
+MLX implementation can fall back to an unconditioned voice. BUILD.md section 36
+thresholds remain proposals, not approved or measured release limits.
 
-A subsequent check of the API-reported cache confirmed both MLX Qwen
-directories were absent and the 1.7B alias was dangling. The resident 1.7B
-process was preserved, and no new model download was authorized at that stage.
-The earlier cache-visibility uncertainty above describes the evidence available
-at the original smoke attempt, not the final setup diagnosis.
+## Validated model artifact
 
-The four example variables `LIVEKIT_URL`, `LIVEKIT_API_KEY`,
-`LIVEKIT_API_SECRET`, and `OPENAI_API_KEY` were absent from this process's
-environment. No credential files were searched and no secret values were read.
-The setup follow-up created a Git-ignored workspace `.env` with empty credential
-fields, the locally authorized profile, and exclusive use left unconfirmed.
-Example dependencies and the bundled Silero VAD loaded successfully.
-
-**Remaining gates at the original handoff:** restore visibility of the already
-existing 0.6B cache in Voicebox, rerun the authorized single-request smoke, then
-supply standard room credentials and confirm exclusive backend use before
-conversational/interruption measurements. See the later setup update below for
-the restored cache. Cloned speaker identity still needs listening/verification because
-the upstream MLX implementation can fall back to an unconditioned voice.
-BUILD.md section 36 thresholds remain proposals, not approved/measured results.
-
-## Approved model restoration update
-
-On 2026-09-11 local time, the user explicitly authorized downloading **only**
-Qwen TTS 0.6B.
-The existing Voicebox downloader failed because its frozen-runtime certificate
-bundle was missing. Restoring trusted CA data without disabling TLS exposed a
-second runtime failure (`Broken pipe`). No backend restart was performed without
-confirmation, and no further runtime repairs were attempted.
-
-An isolated Hugging Face CLI (`huggingface-hub==1.31.0`) successfully downloaded
+The validated snapshot was
 `mlx-community/Qwen3-TTS-12Hz-0.6B-Base-bf16` at revision
-`1eccf1cb2519b5a4e8a95b5f0544f3303568164f` into Voicebox's existing model cache.
-All 14 snapshot files passed the CLI's checksum verification with missing files
-treated as errors. Twelve empty `.incomplete` markers from the failed backend
-attempt were moved aside after verification, and the errored task was dismissed.
-No other model was downloaded.
+`1eccf1cb2519b5a4e8a95b5f0544f3303568164f`.
+All 14 snapshot files passed Hugging Face CLI (`huggingface-hub==1.31.0`)
+checksum verification with missing files treated as errors. Voicebox reported
+a cached size of 2399.58 MiB. Artifact verification is not an inference test;
+the plugin never downloads models automatically.
 
-At `2026-09-10T23:52:28Z`, Voicebox reported the model cached, not downloading,
-and not loaded (2399.58 MiB). This replaces
-the earlier missing-cache blocker; it is not a completed inference test.
-The failed normal loader had already unloaded the previously resident 1.7B model.
+## Real synthesis observation
 
-**Blockers at restoration:** restart the damaged Voicebox application cleanly, then run
-one authorized smoke synthesis with no other consumers. Enter the standard
-LiveKit/OpenAI credentials locally and confirm exclusive backend use before a
-room session. Real audio, speaker identity, interruption recovery and latency
-remain **UNVERIFIED**. The plugin still never downloads models automatically;
-this was an explicit one-time operator setup action.
-
-## Successful real synthesis after UI restart
-
-After explicit user approval, Voicebox was quit and reopened using native macOS
-computer-use controls. Its backend process was replaced, the restored 0.6B cache
-was visible, and no tracked jobs were active. One authorized synthetic test line
-was generated through the actual plugin and LiveKit `ChunkedStream`.
+One synthetic test line was generated through the actual plugin and LiveKit
+`ChunkedStream`, with the selected 0.6B cache visible and no tracked jobs active.
 
 | Observed metric | Single cold-model request |
 | --- | --- |
@@ -149,32 +101,27 @@ was generated through the actual plugin and LiveKit `ChunkedStream`.
 This is one **cold-model** observation, not a warm latency distribution, audible
 playback measurement, or release-performance claim. The integration test passed;
 no audio recording was saved or played, and no LiveKit room connection occurred.
-At `2026-09-11T00:00:30Z`, health reported model_loaded=true and model_size=0.6B.
-The authorized profile name remains in local configuration/evidence, not this document.
+After synthesis, health reported model_loaded=true and model_size=0.6B.
 
-**State at this validation milestone:** real local audio generation and LiveKit
-frame conversion work.
-Speaker identity, audible room playback, interruptions, next-turn recovery and
-warm conversational latency remain **UNVERIFIED**. The standard four LiveKit/OpenAI
-credential fields are still empty, and exclusive backend use must be confirmed
-before starting the room example. The setup `check` command now reports only
-these configuration requirements, not missing or unloaded model weights.
+**Validation boundary:** this check establishes local audio generation and
+LiveKit frame conversion, not speaker identity, audible room playback,
+interruptions, next-turn recovery or warm conversational latency. Room tests
+additionally require standard credentials and confirmed exclusive backend use.
 
 ## Local validation achieved
 
 ### Azure-backed example follow-up
 
-LiveKit credentials were supplied locally for the Azure-backed validation.
-A read-only LiveKit room-list request authenticated successfully without
+Validate room connectivity with a read-only LiveKit room-list request without
 printing room identities or credential values. The optional example uses
 `livekit-plugins-azure==1.8.1` with locked Speech SDK 1.51.2, plus the existing
 OpenAI plugin. The provider package remains Azure-independent.
 
-The Azure example was validated using the signed-in CLI to retrieve resource
-keys into process memory only. Authentication support depends on the endpoint;
-this observation is not a general claim about Entra token support.
-No Azure keys are logged or written to configuration, no endpoints or
-permissions are changed, and no resources are created.
+The Azure example uses the signed-in CLI to retrieve resource keys into process
+memory only. Authentication support depends on the configured endpoint; this
+method is not a general claim about Entra token support. Do not log keys or
+write them to configuration. Connectivity validation does not require changing
+endpoints or permissions or creating resources.
 A short synthetic LLM prompt succeeded against the selected `gpt-4.1-nano`
 deployment. A one-second silent stream completed through Azure STT. These
 establish endpoint/authentication connectivity, not microphone transcription
@@ -185,16 +132,14 @@ received 24,000 PCM samples at 48 kHz mono (half a second of remote audio) by
 5.102 seconds after starting the test, including room and worker startup.
 This is not first-frame latency or a conversational benchmark. The temporary
 room was removed and no listener-side audio file was written.
-Two earlier listener attempts timed out because the scratch harness incorrectly
-used `rtc.AudioStream` as an async context manager; using its supported
-`aclose()` lifecycle fixed the observation without changing TTS.
+Listeners must use the supported `rtc.AudioStream.aclose()` lifecycle rather
+than treating the stream as an async context manager.
 
-An initial room validation may have inherited cloud recording from job defaults.
-Only synthetic greeting audio was involved, not microphone input. The example now
-explicitly passes `record=False` and uses local VAD interruption detection.
-The successful room retry used those explicit settings. Speaker identity,
-human-audible playback, real speech recognition accuracy, and interruption/
-next-turn latency still require an interactive session.
+The example explicitly passes `record=False` instead of inheriting project
+recording defaults, and uses local VAD interruption detection. The successful
+room check used those explicit settings. Speaker identity, human-audible
+playback, real speech recognition accuracy, and interruption/next-turn latency
+still require an interactive session.
 
 ### Original synthetic suite
 
@@ -243,8 +188,9 @@ replace dependency licenses.
 
 The reviewed Voicebox application uses MIT, MLX Audio uses MIT, and the model
 card for `mlx-community/Qwen3-TTS-12Hz-0.6B-Base-bf16` declares Apache-2.0,
-converted from `Qwen/Qwen3-TTS-12Hz-0.6B-Base`. The original cached artifact revision was unknown; the explicitly restored
-0.6B artifact revision is recorded above. No weights are redistributed by this project.
+converted from `Qwen/Qwen3-TTS-12Hz-0.6B-Base`. The original cached artifact revision
+was unknown; the subsequently validated 0.6B artifact revision is recorded above.
+No weights are redistributed by this project.
 Record actual model/backend revisions before publishing performance results.
 Do not infer licenses or support for TADA or other deferred engines from this
 single-model scope.

@@ -35,6 +35,56 @@ The launcher does not install Python dependencies, build the UI, download models
 start a conversation or generate a voice. Complete [first-run setup](quickstart.md)
 before starting it.
 
+## Read-only first-run doctor
+
+After installing the Python environment, run:
+
+```sh
+./studio doctor
+./studio doctor --json
+```
+
+Both commands finish without starting/stopping services, making network or account
+calls, loading models, generating audio, or downloading anything. Doctor does not
+initialize a voice library or change settings. It also runs on Linux to explain
+configuration requirements; this does not add Linux support for the MLX backend
+or managed launcher. A missing `.venv` is reported by the launcher; install the
+environment using [first-run setup](quickstart.md) first.
+
+Doctor checks installed package metadata, the selected backend's hardware
+requirements, the frontend build entry point, the local Qwen snapshot structure,
+native Nemotron executable/layout and model size, LiveKit fields, selected
+reasoning configuration, exclusive-use acknowledgement, and the selected voice.
+It uses the worktree `.env` without executing it or printing values. Existing
+process variables override `.env`; valid saved library settings override provider
+and voice selections just as in the existing `--check` path. No saved settings
+means environment configuration is checked. Invalid or unreadable saved settings
+are an explicit failure, never a silent fallback; restore the private settings
+from a known-good backup rather than deleting the library.
+
+The JSON contract is `{"version":1,"checks":[...]}`. Each check has `id`, `status`,
+`message`, and `action` strings. Status is one of:
+
+| Status | Meaning |
+| --- | --- |
+| `pass` | The stated local configuration check passed |
+| `missing` | A dependency, file, selection, or valid configuration is missing; follow `action` |
+| `unverified` | Deliberately not established by this offline check |
+
+Exit **1** means at least one `missing` check. Exit **0** means configuration is
+ready for the next explicit step, **not** that credentials work or models are
+loaded. An installed CLI is not proof of sign-in, account entitlement, or access
+to the exact model/reasoning preset. Native model checksum verification remains
+in explicit setup/start; weight integrity, runtime compatibility, available RAM,
+LiveKit connectivity, and audible output remain unverified.
+
+A fresh installation normally reports a missing voice. You can still start the
+UI to record and select an authorized voice; conversations additionally require
+LiveKit and a reasoning provider. Run doctor again afterward. It never substitutes
+for an explicitly authorized audition or connection. Unlike the existing
+`python -m examples.studio --check`, doctor never probes Voicebox health or model
+state. Output excludes credential values, private paths, and voice/profile names.
+
 ## Ownership and recovery
 
 The launcher uses your login's `launchd` domain, without `sudo`. Its private

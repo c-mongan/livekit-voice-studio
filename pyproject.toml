@@ -38,6 +38,8 @@ files = [
     "examples/nemotron_service.py",
     "tools/setup_nemotron.py",
     "tools/studio_service.py",
+    "tools/studio_doctor.py",
+    "tools/evaluate.py",
     "tools/read_aloud.py",
 ]
 
