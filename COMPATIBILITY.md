@@ -85,7 +85,7 @@ conversation, next-turn recovery, and multi-turn latency.
 
 ## Tests
 
-The integrated Python suite passes **453 tests** covering the provider, broker,
+The integrated Python suite passes **471 tests** covering the provider, broker,
 private voice library, local STT, agent adapters and fast mode on Python 3.12.
 The 22 broker ownership tests also passed on Python 3.11 and 3.13; the original
 provider previously passed its 103-test suite on all three versions.

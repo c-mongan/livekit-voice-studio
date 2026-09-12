@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import os
 import platform
+import re
 import shutil
 import sys
 from collections.abc import Mapping
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import Literal, TypedDict
+from typing import Any, Literal, TypedDict
 from urllib.parse import urlsplit
 
 Status = Literal["pass", "missing", "unverified"]
@@ -42,6 +44,44 @@ BASE_PACKAGES = (
     "livekit-plugins-openai",
     "livekit-plugins-silero",
 )
+# Static format contracts only. Runtime decoding/loading remains authoritative;
+# importing the runtime validators would load native libraries during preflight.
+MAX_JSON_BYTES = 1024 * 1024
+MAX_WAV_BYTES = 16 * 1024 * 1024
+PRESETS = {
+    "copilot": ("gpt-5.6-luna", "low"),
+    "codex": ("gpt-5.6-luna", "low"),
+    "azure": ("gpt-4.1-nano", "none"),
+    "openai": ("gpt-4.1-mini", "none"),
+}
+
+
+def _read(path: Path, limit: int) -> bytes:
+    with path.open("rb") as handle:
+        data = handle.read(limit + 1)
+    if len(data) > limit:
+        raise ValueError
+    return data
+
+
+def _json(path: Path, limit: int = MAX_JSON_BYTES) -> dict[str, Any]:
+    value = json.loads(_read(path, limit))
+    if not isinstance(value, dict):
+        raise ValueError
+    return value
+
+
+def _voice_path(library: Path, identifier: object) -> Path:
+    if not isinstance(identifier, str) or not re.fullmatch("[a-f0-9]{32}", identifier):
+        raise ValueError
+    path = library / "voices" / identifier
+    if (
+        path.is_symlink()
+        or not path.is_dir()
+        or any((path / name).is_symlink() for name in ("voice.json", "reference.wav"))
+    ):
+        raise ValueError
+    return path
 
 
 def package_installed(name: str) -> bool:
@@ -94,18 +134,30 @@ def _saved_environment(root: Path, env: dict[str, str]) -> bool:
         return False
     if not settings_path.is_file():
         raise ValueError
-    from examples.studio_library import LibraryError, StudioLibrary
-
-    # Reuse the library's bounded reader/schema/voice selector without calling
-    # its constructor: __init__ creates directories, even on a first run.
-    library = StudioLibrary.__new__(StudioLibrary)
-    library.root = library_path
-    library.voices = library_path / "voices"
-    library.settings_path = settings_path
-    try:
-        settings = library.settings()
-    except LibraryError:
-        raise ValueError from None
+    settings = _json(settings_path, 4096)
+    settings.setdefault("codexRestrictedApproved", False)
+    provider = settings.get("llmProvider")
+    if (
+        set(settings)
+        != {
+            "sttProvider",
+            "llmProvider",
+            "llmModel",
+            "reasoningEffort",
+            "voiceId",
+            "codexRestrictedApproved",
+        }
+        or settings["sttProvider"] not in ("nemotron", "azure", "openai")
+        or not isinstance(provider, str)
+        or provider not in PRESETS
+        or (settings["llmModel"], settings["reasoningEffort"]) != PRESETS[provider]
+        or type(settings["codexRestrictedApproved"]) is not bool
+        or (provider == "codex" and not settings["codexRestrictedApproved"])
+    ):
+        raise ValueError
+    voice = (
+        _voice_path(library_path, settings["voiceId"]) if settings["voiceId"] is not None else None
+    )
     env.update(
         VOICEBOX_STT_PROVIDER=settings["sttProvider"],
         VOICEBOX_LLM_PROVIDER=settings["llmProvider"],
@@ -113,36 +165,55 @@ def _saved_environment(root: Path, env: dict[str, str]) -> bool:
         VOICEBOX_REASONING_EFFORT=settings["reasoningEffort"],
         VOICEBOX_CODEX_RESTRICTED="1" if settings["codexRestrictedApproved"] else "0",
     )
-    if settings["voiceId"] is not None:
-        env["VOICEBOX_VOICE_BUNDLE"] = str(library.voice_path(settings["voiceId"]))
+    if voice is not None:
+        env["VOICEBOX_VOICE_BUNDLE"] = str(voice)
         env["VOICEBOX_TTS_BACKEND"] = "mlx"
     return True
 
 
 def _snapshot(path: Path) -> None:
-    from livekit.plugins.voicebox.errors import ConfigurationError
-
-    from examples.fast_qwen import FastQwenTTS
-
-    # Only the existing static snapshot validator runs, not TTS initialization,
-    # preparation, health, or synthesis. This keeps one source of model rules.
-    validator = FastQwenTTS.__new__(FastQwenTTS)
-    validator._model_path = path
-    try:
-        validator._validate_snapshot()
-    except ConfigurationError:
-        raise ValueError from None
+    required = (
+        "config.json",
+        "model.safetensors",
+        "tokenizer_config.json",
+        "speech_tokenizer/config.json",
+        "speech_tokenizer/model.safetensors",
+    )
+    tokenizer = (path / "tokenizer.json").is_file() or all(
+        (path / name).is_file() for name in ("vocab.json", "merges.txt")
+    )
+    if not tokenizer or any(not (path / name).is_file() for name in required):
+        raise ValueError
+    config = _json(path / "config.json")
+    if any(
+        config.get(key) != value
+        for key, value in (
+            ("model_type", "qwen3_tts"),
+            ("tts_model_type", "base"),
+            ("tts_model_size", "0b6"),
+        )
+    ):
+        raise ValueError
 
 
 def _bundle(path: Path) -> None:
-    from livekit.plugins.voicebox.errors import ConfigurationError
-
-    from examples.voice_bundle import load_bundle
-
-    try:
-        load_bundle(path)
-    except ConfigurationError:
-        raise ValueError from None
+    metadata = _json(path / "voice.json")
+    if (
+        metadata.get("version") != 1
+        or metadata.get("authorized") is not True
+        or not isinstance(metadata.get("name"), str)
+        or not 1 <= len(metadata["name"].strip()) <= 100
+        or not isinstance(metadata.get("transcript"), str)
+        or not 1 <= len(metadata["transcript"].strip()) <= 4000
+    ):
+        raise ValueError
+    audio = _read(path / "reference.wav", MAX_WAV_BYTES)
+    if (
+        audio[:4] != b"RIFF"
+        or audio[8:12] != b"WAVE"
+        or metadata.get("audio_sha256") != hashlib.sha256(audio).hexdigest()
+    ):
+        raise ValueError
 
 
 def _url(value: str, schemes: tuple[str, ...]) -> bool:
@@ -432,7 +503,12 @@ def run_checks(root: Path, environ: Mapping[str, str] | None = None) -> Report:
         if backend == "mlx" and populated("VOICEBOX_VOICE_BUNDLE"):
             try:
                 _bundle(_path(env["VOICEBOX_VOICE_BUNDLE"], root, env))
-                add("voice", "pass", "Selected local voice bundle validated without synthesis.")
+                add(
+                    "voice",
+                    "pass",
+                    "Selected local voice metadata, WAV signature and checksum checked; "
+                    "audio decoding remains unverified.",
+                )
             except ImportError:
                 add("voice", "missing", "Voice validator dependencies are missing.", INSTALL)
             except (OSError, ValueError, RuntimeError, RecursionError):
@@ -465,7 +541,8 @@ def run_checks(root: Path, environ: Mapping[str, str] | None = None) -> Report:
     add(
         "model-readiness",
         "unverified",
-        "Model loading, weight integrity, native runtime compatibility, available RAM and audible "
+        "Model loading, weight integrity, native runtime compatibility, audio decoding, "
+        "available RAM and audible "
         "output were not checked. No model, service or inference was started.",
         "Native model checksum validation remains at explicit setup/start. After setup, explicitly "
         "start Studio and authorize an audition/conversation; see docs/quickstart.md.",

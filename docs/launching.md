@@ -55,6 +55,8 @@ Doctor checks installed package metadata, the selected backend's hardware
 requirements, the frontend build entry point, the local Qwen snapshot structure,
 native Nemotron executable/layout and model size, LiveKit fields, selected
 reasoning configuration, exclusive-use acknowledgement, and the selected voice.
+It validates bounded file structure and reference checksums without importing
+native audio runtimes. Audio decoding and inference remain explicitly unverified.
 It uses the worktree `.env` without executing it or printing values. Existing
 process variables override `.env`; valid saved library settings override provider
 and voice selections just as in the existing `--check` path. No saved settings

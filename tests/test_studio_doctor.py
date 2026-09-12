@@ -281,6 +281,84 @@ def test_qwen_uses_existing_snapshot_rules(configured, target, contents):
     report = doctor.run_checks(root, env)
     assert checks(report)["qwen"]["status"] == "missing"
     assert "other-private-model" not in json.dumps(report)
+    from livekit.plugins.voicebox.errors import ConfigurationError
+
+    from examples.fast_qwen import FastQwenTTS
+
+    runtime = FastQwenTTS.__new__(FastQwenTTS)
+    runtime._model_path = Path(env["VOICEBOX_MLX_MODEL_PATH"])
+    with pytest.raises(ConfigurationError):
+        runtime._validate_snapshot()
+
+
+def test_static_contracts_match_runtime_limits_and_valid_snapshot(configured):
+    root, env = configured
+    from livekit.plugins.voicebox import models
+
+    from examples.fast_qwen import FastQwenTTS
+    from examples.studio_library import PRESETS
+
+    assert doctor.MAX_JSON_BYTES == models.MAX_JSON_BYTES
+    assert doctor.MAX_WAV_BYTES == models.MAX_WAV_BYTES
+    assert doctor.PRESETS == PRESETS
+    path = Path(env["VOICEBOX_MLX_MODEL_PATH"])
+    (path / "tokenizer.json").unlink()
+    for name in ("vocab.json", "merges.txt"):
+        (path / name).write_text("{}")
+    runtime = FastQwenTTS.__new__(FastQwenTTS)
+    runtime._model_path = path
+    runtime._validate_snapshot()
+    assert checks(doctor.run_checks(root, env))["qwen"]["status"] == "pass"
+
+
+@pytest.mark.parametrize(
+    "updates",
+    [
+        {},
+        {"llmProvider": "copilot", "llmModel": "gpt-5.6-luna", "reasoningEffort": "low"},
+        {
+            "llmProvider": "codex",
+            "llmModel": "gpt-5.6-luna",
+            "reasoningEffort": "low",
+            "codexRestrictedApproved": True,
+        },
+        {"llmProvider": "azure", "llmModel": "gpt-4.1-nano"},
+        {"sttProvider": "unsupported"},
+        {"sttProvider": []},
+        {"llmProvider": []},
+        {"llmModel": "unsupported"},
+        {"reasoningEffort": "unsupported"},
+        {"codexRestrictedApproved": "true"},
+        {"llmProvider": "codex", "llmModel": "gpt-5.6-luna", "reasoningEffort": "low"},
+        {"voiceId": "../private"},
+        {"voiceId": 123},
+        {"voiceId": "f" * 32},
+        {"extra": "unsupported"},
+    ],
+)
+def test_static_saved_settings_match_runtime_schema(configured, updates):
+    root, env = configured
+    library_path = saved_settings(root, env, **updates)
+    from examples.studio_library import LibraryError, StudioLibrary
+
+    runtime = StudioLibrary.__new__(StudioLibrary)
+    runtime.root = library_path
+    runtime.voices = library_path / "voices"
+    runtime.settings_path = library_path / "settings.json"
+    try:
+        runtime.settings()
+        valid = True
+    except LibraryError:
+        valid = False
+    status = checks(doctor.run_checks(root, env))["settings"]["status"]
+    assert status == ("pass" if valid else "missing")
+
+
+def test_static_voice_check_does_not_claim_audio_decoding(configured):
+    root, env = configured
+    found = checks(doctor.run_checks(root, env))
+    assert "audio decoding remains unverified" in found["voice"]["message"]
+    assert "audio decoding" in found["model-readiness"]["message"]
 
 
 def test_voice_integrity_uses_existing_bundle_validation(configured):
@@ -369,14 +447,23 @@ def test_dangling_saved_settings_never_silently_use_defaults(configured):
     assert found["reasoning"]["status"] == "unverified"
 
 
-def test_cold_process_blocks_all_writes_network_and_child_processes(configured):
+@pytest.mark.parametrize("saved", [False, True])
+def test_cold_process_blocks_all_writes_network_and_child_processes(configured, saved):
     root, env = configured
+    if saved:
+        saved_settings(root, env)
+        env["OPENAI_API_KEY"] = "fixture-key"
     script = """
 import json, os, sys
 from pathlib import Path
 from tools import studio_doctor as doctor
 root, env = json.load(sys.stdin)
 def audit(event, args):
+    if event == "import" and args[0].split(".")[0] in ("livekit", "numpy", "soundfile",
+                                                     "scipy", "mlx", "mlx_audio"):
+        raise AssertionError("Doctor imported a native/model runtime: " + args[0])
+    if event == "ctypes.dlopen":
+        raise AssertionError("Doctor loaded a native library")
     if event in ("os.mkdir", "os.remove", "os.rename", "os.chmod",
                  "socket.connect", "socket.bind", "subprocess.Popen", "os.system"):
         raise RuntimeError("Forbidden side effect: " + event)
