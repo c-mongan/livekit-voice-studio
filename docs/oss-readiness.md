@@ -131,13 +131,39 @@ and invokes native setup through the installed uv Python environment.
 This verifies first-time configuration diagnostics on the maintainer's machine,
 not a new person's account entitlement or a clean operating-system installation.
 
-## Before public release
+## Current developer-preview status
 
-1. Complete a one-minute human microphone and listening check using an authorized
-   voice, including a real spoken interruption and follow-up.
-2. Recheck cold startup with resource conditions recorded; diagnose recurrence
-   rather than disguising it with a larger timeout.
-3. Run hosted CI for the reviewed change and complete a fresh-user installation
-   trial without assuming the maintainer's account access or cached models.
-4. Review release contents and explicitly choose publication. No release, push,
-   visibility change or model distribution occurred in this pass.
+The review branch was committed and passed GitHub CI before this final security
+pass. A dependency audit identified GHSA-6w46-j5rx-g56g in the old development
+pytest pin; pytest 9.0.3 and compatible pytest-asyncio 1.4.0 resolve it. The
+updated installed Python dependency audit reports no known vulnerabilities,
+except that the unpublished local project cannot be matched to a PyPI advisory.
+The npm audit reports zero known vulnerabilities. CI now repeats both checks.
+
+A fresh source directory received a new Python environment and frontend install,
+without a .env or saved voice library. A broken/reused npm cache caused an initial
+install stall and a missing esbuild installer; a new cache installed successfully.
+The frontend's 167 tests, type checks, and build passed. The initial Python run
+without the optional Azure extra failed three Azure factory tests; the testing
+instructions now explicitly require that extra even for Copilot users. With the
+full documented developer extras installed, all 477 tests passed in the fresh
+environment. The read-only checker returned the expected missing-configuration
+status without creating a library.
+
+A five-turn synthetic spoken run with five-second pauses passed at 4.226, 3.288,
+3.019, 3.286 and 3.422 seconds, median 3.288 seconds, then returned idle. This
+extends the prior interruption and twenty-second-pause checks; it does not prove
+that the earlier intermittent failure is fixed.
+
+License inventory found metadata or notice files for all 109 installed Python
+distributions and license metadata for all 208 npm lockfile entries. This is
+traceability, not an exhaustive legal clearance. No model weights are shipped.
+
+## Remaining acceptance boundaries
+
+Human microphone/listening and independent hardware/account validation cannot be
+substituted by agent-run tests. Preserve these limitations and the unresolved
+intermittent error in docs/preview-release.md. This is a developer preview, not a
+stable release. Final hosted CI must pass the exact security-update commit.
+Repository visibility changes and a public release remain separate publication
+actions; source preparation does not perform them.

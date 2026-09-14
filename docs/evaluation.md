@@ -6,7 +6,17 @@ cloned voice sounds like its speaker.
 
 ## Offline functional checks
 
-After installing the development dependencies:
+Install the full development extras from CONTRIBUTING.md before running the
+suite. The tests exercise Azure factories even when your chosen runtime provider
+is Copilot, so the Azure extra is required for tests. Keep the MLX extra when
+using the Apple Silicon app; uv sync can remove extras omitted from a later command.
+
+```sh
+uv sync --frozen --package livekit-plugins-voicebox \
+  --extra dev --extra example --extra azure --extra agents --extra mlx --python 3.12
+```
+
+Then run:
 
 ```sh
 uv run --no-sync python -m tools.evaluate

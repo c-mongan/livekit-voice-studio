@@ -8,10 +8,22 @@ answers. The Voicebox desktop app can stay closed.
 
 ![Voicebox Studio: voice setup, conversation and optional pipeline details](docs/studio.png)
 
+## Development preview
+
+The source is available under MIT, with separate licenses for dependencies and
+models. This is an early single-user app for Apple Silicon, not a fully offline
+assistant or a supported production service. LiveKit and the selected reasoning
+provider require your own accounts.
+
+Synthetic spoken tests cover replies, deliberate interruption, pauses and recovery.
+One earlier intermittent provider failure remains unexplained; response speed varies.
+Human listening and an independent user installation are still needed. See the
+[preview release notes](docs/preview-release.md) for tested scope and limitations.
+
 ## Get started
 
 The tested setup is an **Apple Silicon Mac with 16 GB RAM**, Python 3.12,
-Node.js 22+ and [uv](https://docs.astral.sh/uv/).
+Node.js 22.12+ and [uv](https://docs.astral.sh/uv/).
 You'll also need:
 
 - Qwen TTS 0.6B weights and the Nemotron CPU recognizer, installed explicitly.

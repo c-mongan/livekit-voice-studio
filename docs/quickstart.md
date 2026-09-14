@@ -22,7 +22,8 @@ npm --prefix web ci
 npm --prefix web run build
 ```
 
-Add `--extra azure` to the same `uv sync` command if you want Azure. Repeating
+Add `--extra azure` to the same `uv sync` command if you want Azure, or if you
+plan to run the full automated test suite (which tests all provider factories). Repeating
 sync with fewer extras can remove previously installed optional dependencies.
 
 ## 2. Reuse or explicitly download Qwen
