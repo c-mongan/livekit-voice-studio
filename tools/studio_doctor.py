@@ -335,7 +335,7 @@ def run_checks(root: Path, environ: Mapping[str, str] | None = None) -> Report:
         "Frontend build entry point and assets directory exist."
         if frontend_ready
         else "Frontend build entry point or assets directory is missing.",
-        "Run npm --prefix web ci && npm --prefix web run build (Node.js 22+).",
+        "Run npm --prefix web ci && npm --prefix web run build (Node.js 22.12+).",
     )
 
     if not configuration_valid:
@@ -516,8 +516,7 @@ def run_checks(root: Path, environ: Mapping[str, str] | None = None) -> Report:
                     "voice",
                     "missing",
                     "Selected local voice bundle is missing or invalid.",
-                    "Restore the authorized bundle or record and select a voice "
-                    "in Settings & voices.",
+                    "Restore the authorized bundle or record and select a voice in Voice library.",
                 )
         else:
             check(
@@ -526,7 +525,7 @@ def run_checks(root: Path, environ: Mapping[str, str] | None = None) -> Report:
                 "Voicebox profile selector configured; existence/authorization not verified."
                 if populated("VOICEBOX_PROFILE")
                 else "No authorized voice has been selected.",
-                "Record and select a voice in Settings & voices, or configure an authorized "
+                "Record and select a voice in Voice library, or configure an authorized "
                 "VOICEBOX_PROFILE / local VOICEBOX_VOICE_BUNDLE. See docs/quickstart.md.",
             )
 

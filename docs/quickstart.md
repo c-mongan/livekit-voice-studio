@@ -1,13 +1,14 @@
 # First run on an Apple Silicon Mac
 
-This is the supported fast-voice path. You need Python 3.12, Node.js 22+, `uv`,
+This is the supported fast-voice path. You need Python 3.12, Node.js 22.12+, `uv`,
 Git and Xcode Command Line Tools. The reference machine has 16 GiB RAM.
 Allow roughly 12 GiB free for a fresh setup, including download/build caches;
 that is a planning margin, not a runtime memory requirement.
 
 ## 1. Install the application
 
-Clone the source, then install its locked dependencies:
+Clone the source, then install its locked dependencies. Until the repository is
+public, cloning requires access to the private GitHub repository:
 
 ```sh
 git clone https://github.com/c-mongan/livekit-voice-studio.git
@@ -21,7 +22,8 @@ npm --prefix web ci
 npm --prefix web run build
 ```
 
-Add `--extra azure` to the same `uv sync` command if you want Azure. Repeating
+Add `--extra azure` to the same `uv sync` command if you want Azure, or if you
+plan to run the full automated test suite (which tests all provider factories). Repeating
 sync with fewer extras can remove previously installed optional dependencies.
 
 ## 2. Reuse or explicitly download Qwen
@@ -61,9 +63,23 @@ For a new checkout:
 test -e .env || (umask 077; cp .env.example .env)
 ```
 
-Set `VOICEBOX_TTS_BACKEND=mlx`, the Qwen snapshot path and the Nemotron executable
-and model paths from its guide. Stop competing generation jobs, then explicitly
-set `VOICEBOX_EXCLUSIVE=1`.
+The example preserves the older external Voicebox backend by default. For this
+standalone guide, edit these fields in `.env` (replace paths with the real paths
+returned by the preceding setup steps):
+
+| Field | Value for this guide |
+| --- | --- |
+| `VOICEBOX_TTS_BACKEND` | `mlx` |
+| `VOICEBOX_MLX_MODEL_PATH` | Absolute path to the complete Qwen snapshot |
+| `VOICEBOX_STT_PROVIDER` | `nemotron` |
+| `NEMOTRON_SERVER_BINARY` | Absolute path ending in `build/bin/nemo-speech` |
+| `NEMOTRON_MODEL_PATH` | Absolute path to the verified `.gguf` model |
+| `VOICEBOX_LLM_PROVIDER` | `copilot` |
+| `VOICEBOX_EXCLUSIVE` | `1`, after stopping competing generation jobs |
+
+Leave `VOICEBOX_VOICE_BUNDLE` empty until you record and select a voice in the
+app. Selecting it saves the choice in the private local library. No external
+Voicebox server is required for this path. Do not run `.env` as a shell script.
 
 For conversations, add a LiveKit project's URL, API key and secret. Install and
 sign in to Copilot CLI, then verify your account offers Luna with low reasoning.
@@ -83,8 +99,11 @@ Check the local setup without starting services or contacting providers:
 ./studio doctor
 ```
 
-Missing checks include a concrete next action. A missing voice is expected before
-recording; account access and loaded-model readiness remain explicitly unverified.
+A nonzero exit is expected while setup is incomplete. Missing checks include a
+concrete next action. Before recording, a missing voice is expected; do not invent
+a profile identifier to make that check pass. Once the other configuration checks
+pass, continue to the next step to create the voice. Account access and loaded-model
+readiness remain explicitly unverified.
 See [doctor's checks and limits](launching.md#read-only-first-run-doctor).
 
 ## 5. Record, audition, then talk
@@ -97,7 +116,7 @@ The command returns while macOS keeps the server running. Use `./studio status`
 to inspect it and `./studio stop` to request graceful shutdown.
 See [service ownership and recovery](launching.md).
 
-Open `http://127.0.0.1:8765`. In **Settings & voices**, record 5–30 seconds,
+Open `http://127.0.0.1:8765`. Open **Voice library** and record 5–30 seconds,
 verify the exact transcript and confirm permission. Save the voice, then generate
 an audition with different text. The original-recording preview is not the clone.
 Listen, choose the voice, and start a conversation.

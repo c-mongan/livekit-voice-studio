@@ -6,7 +6,17 @@ cloned voice sounds like its speaker.
 
 ## Offline functional checks
 
-After installing the development dependencies:
+Install the full development extras from CONTRIBUTING.md before running the
+suite. The tests exercise Azure factories even when your chosen runtime provider
+is Copilot, so the Azure extra is required for tests. Keep the MLX extra when
+using the Apple Silicon app; uv sync can remove extras omitted from a later command.
+
+```sh
+uv sync --frozen --package livekit-plugins-voicebox \
+  --extra dev --extra example --extra azure --extra agents --extra mlx --python 3.12
+```
+
+Then run:
 
 ```sh
 uv run --no-sync python -m tools.evaluate
@@ -63,3 +73,53 @@ Use the [voice-quality checklist](voice-quality.md) for names, numbers, pacing
 and question intonation. Test a real microphone, your accent, room noise and
 audible interruption separately. Browser tests and nonzero PCM prove signal
 flow, not naturalness, identity or safety for sensitive documents.
+
+## Two-turn reasoning check
+
+To verify the account adapter and conversation context without voice models or
+LiveKit, run this explicitly opted-in check. It sends two short synthetic prompts,
+checks a remembered word, and reports first-text timings without saving replies.
+It uses normal subscription/account inference. It does not change Studio settings.
+
+```sh
+STUDIO_AGENT_INTEGRATION=1 STUDIO_TEST_PROVIDER=copilot \
+  uv run --no-sync pytest tests/integration/test_agent_live.py -q -s
+```
+
+Restricted Codex has a separate explicit opt-in. Its preflight must still verify
+zero external tools and command networking disabled; it is not tool-free mode.
+Read [the provider boundary](agent-providers.md#restricted-agent-mode) first.
+
+```sh
+STUDIO_AGENT_INTEGRATION=1 STUDIO_TEST_PROVIDER=codex \
+  STUDIO_TEST_RESTRICTED_CODEX=1 \
+  uv run --no-sync pytest tests/integration/test_agent_live.py -q -s
+```
+
+Neither check runs in ordinary CI. Passing it establishes this tiny context test,
+not general reasoning quality, full speech compatibility or every subscription.
+
+## Conversation-flow check
+
+Let a short spoken answer finish. Then request a longer answer and interrupt it
+with a different question while audio is playing. Confirm the old reply stops,
+the new answer is correct, and End session returns to Ready. A shortened
+transcript alone does not prove a fault: it may reflect an intentional interruption.
+Repeat casual small talk to check greeting repetition and premature goodbyes.
+Synthetic audio validates signal flow; it does not replace microphone and listening
+evaluation. Record failures alongside successful timings.
+
+## Diagnose stage timing and pauses
+
+The spoken test also prints `diagnostic_turn` records containing the latest
+worker timing measurements: final-transcript delay, end-of-turn delay, first
+reasoning token, and first generated audio frame. These are diagnostic snapshots,
+not disjoint parts of a sum: end-of-turn and transcription delays overlap,
+and playback/transport add delay beyond model timings. Keep the separately
+measured speech-end-to-remote-audio latency as the end-to-end result.
+
+To check a pause with no microphone frames between two turns, run the live test
+directly with `STUDIO_TEST_TURNS=2` and `STUDIO_TEST_PAUSE_SECONDS=20`, alongside
+`STUDIO_SPOKEN_INTEGRATION=1` and the existing `STUDIO_TEST_AUDIO` fixture.
+The pause is bounded to 0–30 seconds and defaults to zero. It tests an idle input
+stream, not recognition under continuous room noise.

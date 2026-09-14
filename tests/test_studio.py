@@ -483,3 +483,66 @@ async def test_bundle_status_skips_voicebox_provider(broker, monkeypatch, tmp_pa
     assert state["ready"]
     assert state["voice"]["source"] == "local-bundle"
     check.assert_awaited_once_with(require_loaded=False, local_voice=True)
+
+
+def test_startup_progress_is_owned_fixed_text_and_cleared_when_ready(broker):
+    owner = owned_session()
+    broker.current = owner
+    broker.phase = "starting"
+    event = {"key": owner.key, "event": "startup", "stage": "loading the existing local Qwen model"}
+    broker._event(owner, {**event, "key": "wrong"})
+    assert broker.message is None
+    broker._event(owner, event)
+    assert broker.message == "Loading the local Qwen speech model…"
+    for invalid in ("private provider body", [], None, 1):
+        broker._event(owner, {**event, "stage": invalid})
+        assert broker.message == "Loading the local Qwen speech model…"
+    broker._event(owner, {"key": owner.key, "event": "ready"})
+    assert broker.phase == "active"
+    assert broker.message is None
+    broker._event(owner, event)
+    assert broker.message is None
+
+
+def test_late_startup_progress_cannot_hide_a_drain_failure(broker):
+    owner = owned_session()
+    broker.current = owner
+    broker.phase = "draining"
+    broker.message = "Waiting for safe cleanup."
+    broker._event(owner, {"key": owner.key, "event": "startup", "stage": "conversation startup"})
+    assert broker.message == "Waiting for safe cleanup."
+
+
+async def test_startup_timeout_keeps_last_stage_and_requests_owned_cleanup(broker, monkeypatch):
+    owner = owned_session()
+    broker.current = owner
+    broker.phase = "starting"
+    owner.created = module.time.monotonic() - module.STARTUP_SECONDS - 1
+    broker.message = "Loading the local Qwen speech model…"
+    sleeps = 0
+
+    async def sleep(_):
+        nonlocal sleeps
+        sleeps += 1
+        if sleeps > 1:
+            raise asyncio.CancelledError
+
+    monkeypatch.setattr(module.asyncio, "sleep", sleep)
+    monkeypatch.setattr(broker, "end", AsyncMock())
+    with pytest.raises(asyncio.CancelledError):
+        await broker.watchdog()
+    broker.end.assert_awaited_once_with(owner.id)
+    assert broker.message == "Startup timed out. Loading the local Qwen speech model…"
+
+
+@pytest.mark.parametrize("key", ["endOfUtteranceSeconds", "transcriptionDelaySeconds"])
+def test_turn_timing_metrics_require_owned_finite_values(broker, key):
+    owner = owned_session()
+    broker.current = owner
+    broker._event(owner, {"key": "wrong", "event": "metrics", key: 1.25})
+    assert broker.metrics[key] is None
+    for invalid in (True, -1, float("nan"), float("inf"), "secret"):
+        broker._event(owner, {"key": owner.key, "event": "metrics", key: invalid})
+        assert broker.metrics[key] is None
+    broker._event(owner, {"key": owner.key, "event": "metrics", key: 1.25})
+    assert broker.metrics[key] == 1.25

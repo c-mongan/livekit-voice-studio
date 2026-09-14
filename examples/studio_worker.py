@@ -11,11 +11,12 @@ from typing import Any
 
 from livekit import api, rtc
 from livekit.agents import Agent, AgentSession, MetricsCollectedEvent, room_io
-from livekit.agents.metrics import LLMMetrics, TTSMetrics
+from livekit.agents.metrics import EOUMetrics, LLMMetrics, TTSMetrics
 from livekit.plugins import voicebox
 
 from examples.fast_qwen import FastQwenTTS
 from examples.minimal_agent import configured_ai, configured_provider, provider_choices
+from examples.startup_progress import STARTUP_MESSAGES
 
 
 def report(event: str, **values: Any) -> None:
@@ -29,6 +30,13 @@ def report(event: str, **values: Any) -> None:
         logging.error("Studio supervisor disconnected; cleanup must still drain owned inference.")
 
 
+def report_startup(stage: str) -> str:
+    if stage not in STARTUP_MESSAGES:
+        raise ValueError("Unknown startup stage.")
+    report("startup", stage=stage)
+    return stage
+
+
 async def run() -> None:
     loop = asyncio.get_running_loop()
     stop = asyncio.Event()
@@ -40,7 +48,7 @@ async def run() -> None:
     session: AgentSession[None] | None = None
     speech = language_model = None
     safe = True
-    stage = "voice provider configuration"
+    stage = report_startup("voice provider configuration")
     owner = os.environ["STUDIO_PARTICIPANT_IDENTITY"]
 
     async def watch_parent() -> None:
@@ -79,27 +87,27 @@ async def run() -> None:
             else configured_provider()
         )
         provider.on("error", provider_error)
-        stage = "Voicebox readiness"
+        stage = report_startup("Voicebox readiness")
         await provider.resolve_profile()
         await provider.check_idle()
         readiness = await provider.model_readiness()
         if not readiness.downloaded or (not fast and not readiness.loaded):
             raise RuntimeError("The selected model must already be cached and loaded.")
-        stage = "speech and language configuration"
+        stage = report_startup("speech and language configuration")
         speech, language_model = await configured_ai()
         if provider_choices()[1] in ("copilot", "codex"):
             from examples.agent_llm import AgentLLM
 
             if isinstance(language_model, AgentLLM):
-                stage = "agent model, authentication and permission validation"
+                stage = report_startup("agent model, authentication and permission validation")
                 await language_model.validate()
         if stop.is_set():
             return
         if isinstance(provider, FastQwenTTS):
-            stage = "loading the existing local Qwen model"
+            stage = report_startup("loading the existing local Qwen model")
             await provider.prepare()
             if os.environ.get("VOICEBOX_MLX_PREWARM", "1") == "1" and not stop.is_set():
-                stage = "preparing the selected voice for fast replies"
+                stage = report_startup("preparing the selected voice for fast replies")
                 async with provider.synthesize("Hello.") as warmup:
                     async for _ in warmup:
                         if stop.is_set():
@@ -109,11 +117,11 @@ async def run() -> None:
             return
         from livekit.plugins import silero
 
-        stage = "local voice activity detector"
+        stage = report_startup("local voice activity detector")
         vad = await asyncio.to_thread(silero.VAD.load)
         if stop.is_set():
             return
-        stage = "conversation session setup"
+        stage = report_startup("conversation session setup")
         session = AgentSession(
             vad=vad,
             stt=speech,
@@ -135,6 +143,12 @@ async def run() -> None:
                     ttsFirstFrameSeconds=value.ttfb if value.ttfb >= 0 else None,
                     ttsAudioSeconds=value.audio_duration,
                 )
+            elif isinstance(value, EOUMetrics):
+                report(
+                    "metrics",
+                    endOfUtteranceSeconds=value.end_of_utterance_delay,
+                    transcriptionDelaySeconds=value.transcription_delay,
+                )
             elif isinstance(value, LLMMetrics):
                 report("metrics", llmFirstTokenSeconds=value.ttft if value.ttft >= 0 else None)
 
@@ -145,9 +159,16 @@ async def run() -> None:
                 reason = getattr(event.error, "error", None)
                 report("error", message=f"Agent response failed: {str(reason)[:180]}")
                 return
+            component = (
+                "Speech recognition"
+                if event.source is speech
+                else "Voice synthesis"
+                if event.source is provider
+                else "Conversation"
+            )
             report(
                 "error",
-                message="A conversation provider reported an error. Try ending the session.",
+                message=f"{component} reported an error. Try ending the session.",
             )
 
         if provider_choices()[0] == "nemotron":
@@ -185,10 +206,10 @@ async def run() -> None:
             )
             .to_jwt()
         )
-        stage = "LiveKit agent connection"
+        stage = report_startup("LiveKit agent connection")
         await room.connect(os.environ["LIVEKIT_URL"], token)
         room.local_participant.register_rpc_method("voicebox.interrupt", interrupt)
-        stage = "conversation startup"
+        stage = report_startup("conversation startup")
         await session.start(
             room=room,
             record=False,
@@ -200,6 +221,13 @@ async def run() -> None:
                 instructions=(
                     "You are a helpful conversational assistant, not a coding agent. "
                     "Use one or two short sentences in plain text, usually under 40 words. "
+                    "Respond to the latest point instead of repeating greetings "
+                    "or stock acknowledgements. "
+                    "For casual chat, offer one relevant thought or gentle follow-up when useful; "
+                    "do not ask a question every turn. A brief okay or thanks is not necessarily "
+                    "a goodbye; only close the conversation when the user clearly ends it. "
+                    "If interrupted, follow the user’s new direction "
+                    "without finishing the old reply. "
                     "Do not use markdown or lists unless asked. Do not claim actions or access "
                     "to files or tools you do not have. Your speech is synthetic."
                 )
