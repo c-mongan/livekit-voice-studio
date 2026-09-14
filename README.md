@@ -1,6 +1,6 @@
 # Voicebox Studio
 
-Talk to an assistant using a voice you've recorded or have permission to use.
+Talk with **GitHub Copilot or OpenAI Codex** using a voice you've recorded or have permission to use.
 
 Record a short reference, hear it say something new, then start a conversation.
 Speech recognition and generation run on your Mac; you choose the service that
@@ -19,6 +19,29 @@ Synthetic spoken tests cover replies, deliberate interruption, pauses and recove
 One earlier intermittent provider failure remains unexplained; response speed varies.
 Human listening and an independent user installation are still needed. See the
 [preview release notes](docs/preview-release.md) for tested scope and limitations.
+
+## Set it up with your coding agent
+
+Give Codex, Copilot, or another coding agent this prompt:
+
+> Set up Voicebox Studio on this machine. Read https://github.com/c-mongan/livekit-voice-studio/blob/main/docs/agent-quickstart.md and follow it. Reuse existing installations and preserve my settings. Ask before model downloads or paid service setup. Let me complete sign-in and voice consent. Verify the app and report what works and what is still blocked.
+
+The [agent quickstart](docs/agent-quickstart.md) provides an ordered setup and
+verification checklist. It cannot supply accounts, bypass permissions, or guarantee
+compatibility with every machine. Prefer the manual guide below if you want to
+run each step yourself.
+
+## Copilot or Codex?
+
+| Reasoning provider | What has been verified |
+| --- | --- |
+| GitHub Copilot | Complete spoken conversations, interruption and follow-up with local speech |
+| OpenAI Codex | Restricted-agent preflight and two-turn reasoning/memory; full Codex speech pipeline still unverified |
+
+Both generate conversation replies; local Nemotron recognizes speech and Qwen
+speaks it. You need your own compatible account and installed CLI. Copilot uses
+no tools; Codex requires a separate restricted-agent consent step. See
+[provider setup and boundaries](docs/agent-providers.md).
 
 ## Get started
 
