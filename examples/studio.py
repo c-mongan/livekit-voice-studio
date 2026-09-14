@@ -40,6 +40,7 @@ from examples.backend_lease import BackendLease, runtime_root
 from examples.fast_qwen import FastQwenTTS
 from examples.minimal_agent import check_setup, configured_provider, provider_choices
 from examples.nemotron_service import NemotronService
+from examples.startup_progress import STARTUP_MESSAGES
 from examples.studio_library import GUIDED_TEXT, MAX_RECORDING_BYTES, LibraryError, StudioLibrary
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -95,6 +96,8 @@ class Studio:
             "ttsFirstFrameSeconds": None,
             "ttsAudioSeconds": None,
             "llmFirstTokenSeconds": None,
+            "endOfUtteranceSeconds": None,
+            "transcriptionDelaySeconds": None,
         }
         self.lock = asyncio.Lock()
         self.start_task: asyncio.Task[dict[str, Any]] | None = None
@@ -644,8 +647,13 @@ class Studio:
                     owned.end_task = asyncio.create_task(self._end(owned))
                     owned.end_task.add_done_callback(self._observe_task)
                     self.phase = "draining"
+        elif event == "startup" and owned.kind == "room" and self.phase == "starting":
+            stage = data.get("stage")
+            if isinstance(stage, str) and stage in STARTUP_MESSAGES:
+                self.message = STARTUP_MESSAGES[stage]
         elif event == "ready" and self.phase == "starting":
             self.phase = "active"
+            self.message = None
             if owned.kind == "audition":
                 self.message = "Generating the audition with the saved voice."
         elif event == "model_loaded":
@@ -762,9 +770,14 @@ class Studio:
                     > (AUDITION_SECONDS if owned.kind == "audition" else MAX_SESSION_SECONDS)
                     or (self.phase == "starting" and now - owned.created > STARTUP_SECONDS)
                 ):
-                    self.message = (
-                        "Session ended: its owner left, startup timed out, or one hour elapsed."
-                    )
+                    if self.phase == "starting" and now - owned.created > STARTUP_SECONDS:
+                        self.message = "Startup timed out. " + (
+                            self.message or "The local agent did not become ready."
+                        )
+                    elif now - owned.heartbeat > HEARTBEAT_SECONDS:
+                        self.message = "Session ended because its browser stopped responding."
+                    else:
+                        self.message = "Session ended because its time limit was reached."
                     if owned.kind == "audition":
                         await self.end_audition(owned.id)
                     else:

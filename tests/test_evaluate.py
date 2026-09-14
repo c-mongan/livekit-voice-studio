@@ -24,6 +24,9 @@ def test_spoken_summary_keeps_config_and_all_samples():
             }
         )
     )
+    output += "\n" + json.dumps(
+        {"diagnostic_turn": 3, "stage_metrics": {"transcriptionDelaySeconds": 0.7}}
+    )
     result = parse_spoken(output, 3)
     assert result["samples_seconds"] == [4.0, 3.0, 5.0]
     assert result["median_seconds"] == 4.0

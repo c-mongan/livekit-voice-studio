@@ -45,3 +45,18 @@ agent runtime directories or reference recordings in an issue.
 Use `npm --prefix web run dev` alongside Studio. Vite binds to loopback and
 proxies requests to the local API. The production build is served by Python.
 Do not start the standalone example worker alongside Studio.
+
+## Session startup is slow
+
+The conversation notice identifies the current startup stage: reasoning-account
+validation, Qwen model loading, selected-voice preparation, speech detection, or
+LiveKit connection. These are fixed messages; private provider output and model
+paths are not exposed. A startup timeout retains its last stage while owned work
+finishes draining. Wait for idle before retrying; do not clear an unresolved-work
+marker just to dismiss a slow start.
+
+A configuration-ready doctor result does not establish runtime readiness. A
+cold model load can behave differently from a warm one. Keep dependency installs
+and other heavy work separate from voice measurements, and record failed cold
+starts alongside successful samples. Do not increase deadlines or weaken drain
+checks merely to make a benchmark pass.

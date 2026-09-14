@@ -123,7 +123,10 @@ async def test_provider_construction_failure_reports_safe_exit(monkeypatch):
     )
     await studio_worker.run()
     assert reports[-1] == ("finished", {"safe": True})
-    assert "voice provider configuration" in reports[0][1]["message"]
+    assert reports[0] == ("startup", {"stage": "voice provider configuration"})
+    errors = [data for event, data in reports if event == "error"]
+    assert len(errors) == 1
+    assert "voice provider configuration" in errors[0]["message"]
 
 
 def test_local_recognizer_finalize_is_owned_and_explicit():

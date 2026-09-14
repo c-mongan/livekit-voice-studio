@@ -51,9 +51,9 @@ From the repository root, run each explicit phase:
 ```bash
 df -h .
 uv sync --project experiments/nemotron
-python tools/setup_nemotron.py --build
-python tools/setup_nemotron.py --download
-python tools/setup_nemotron.py --check
+uv run --no-sync python tools/setup_nemotron.py --build
+uv run --no-sync python tools/setup_nemotron.py --download
+uv run --no-sync python tools/setup_nemotron.py --check
 ```
 
 Defaults: `~/.local/share/voicebox-studio/nemotron/` for source, build, notices and
@@ -74,7 +74,7 @@ the lock; check for an active setup process before explicitly removing it.
 The **foreground** command below never installs or downloads:
 
 ```bash
-python tools/setup_nemotron.py --serve --port 8766
+uv run --no-sync python tools/setup_nemotron.py --serve --port 8766
 ```
 
 It checks the model, refuses a busy port, strips inherited `NEMO_SPEECH_*` model

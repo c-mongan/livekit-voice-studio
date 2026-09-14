@@ -69,6 +69,8 @@ Local auditions and [read-aloud](docs/read-aloud.md) don't need a reasoning requ
 or LiveKit. Read-aloud can speak a short excerpt of an existing reply, including
 an opt-in Codex notification, with Stop and mute controls.
 
+[Current standalone validation and remaining checks](docs/oss-readiness.md)
+
 ## Status and limits
 
 This is an **experimental, single-user app**, not a production service.
@@ -104,3 +106,5 @@ see [provenance](docs/provenance.md), [compatibility](COMPATIBILITY.md#license-b
 and [third-party notices](web/THIRD_PARTY_LICENSES).
 
 [MIT license](LICENSE) · [Contributing](CONTRIBUTING.md) · [Security reporting](SECURITY.md)
+
+For source-release contents and license boundaries, see [release preparation](docs/releasing.md).

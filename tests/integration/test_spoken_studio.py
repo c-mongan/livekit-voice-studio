@@ -32,6 +32,8 @@ def read_fixture(path):
 async def test_spoken_input_to_nonzero_reply():
     turns = int(os.environ.get("STUDIO_TEST_TURNS", "1"))
     assert 1 <= turns <= 5, "Use 1–5 explicitly authorized turns."
+    pause = int(os.environ.get("STUDIO_TEST_PAUSE_SECONDS", "0"))
+    assert 0 <= pause <= 30, "Use 0–30 seconds between turns."
     path = os.environ.get("STUDIO_TEST_AUDIO")
     assert path, "Set STUDIO_TEST_AUDIO to an authorized short synthetic audio file."
     data = await asyncio.to_thread(read_fixture, path)
@@ -113,6 +115,7 @@ async def test_spoken_input_to_nonzero_reply():
             timings = []
             for turn in range(turns):
                 if turn:
+                    await asyncio.sleep(pause)
                     result = asyncio.get_running_loop().create_future()
                 count = 0
                 for offset in range(0, len(audio), 640):
@@ -150,6 +153,13 @@ async def test_spoken_input_to_nonzero_reply():
                         ):
                             break
                         await asyncio.sleep(0.1)
+                async with http.get(base + "/api/status") as response:
+                    measured_state = await response.json()
+                print(
+                    json.dumps(
+                        {"diagnostic_turn": turn + 1, "stage_metrics": measured_state["metrics"]}
+                    )
+                )
             print(
                 json.dumps(
                     {
