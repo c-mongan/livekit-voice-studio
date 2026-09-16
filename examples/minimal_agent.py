@@ -1,5 +1,7 @@
 """One exclusive local Voicebox-backed LiveKit room agent."""
 
+from __future__ import annotations
+
 import asyncio
 import importlib.util
 import logging
@@ -14,6 +16,9 @@ from dotenv import load_dotenv
 from livekit.agents import Agent, AgentServer, AgentSession, JobContext, JobRequest, cli, llm, stt
 from livekit.plugins import openai, silero, voicebox
 from livekit.plugins.voicebox.errors import VoiceboxError
+
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from examples.hermes_api import HermesAPIError, HermesConfig, HermesRunsClient
 from examples.hermes_llm import ApprovalRequest, ApprovalResolution, HermesLLM, ToolStatus
