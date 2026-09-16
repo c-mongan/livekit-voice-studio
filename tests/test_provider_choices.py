@@ -102,6 +102,7 @@ async def test_hermes_reasoning_keeps_nemotron_independent_and_preflights(monkey
         "client": client,
         "on_approval": approval,
         "on_approval_resolved": resolved,
+        "on_tool_status": None,
     }
 
 

@@ -15,7 +15,7 @@ from livekit.agents.metrics import EOUMetrics, LLMMetrics, TTSMetrics
 from livekit.plugins import voicebox
 
 from examples.fast_qwen import FastQwenTTS
-from examples.hermes_llm import ApprovalRequest, ApprovalResolution, HermesLLM
+from examples.hermes_llm import ApprovalRequest, ApprovalResolution, HermesLLM, ToolStatus
 from examples.minimal_agent import configured_ai, configured_provider, provider_choices
 from examples.startup_progress import STARTUP_MESSAGES
 
@@ -76,6 +76,49 @@ async def publish_approval_resolution(
         reliable=True,
         destination_identities=[owner],
         topic="hermes.approval.resolved",
+    )
+
+
+async def publish_tool_status(room: rtc.Room, owner: str, status: ToolStatus) -> None:
+    """Publish only Hermes' bounded status projection, never tool arguments or raw results."""
+    if (
+        not status.run_id
+        or len(status.run_id) > _MAX_APPROVAL_ID_CHARS
+        or not status.event_id
+        or len(status.event_id) > 220
+        or status.phase not in {"started", "completed"}
+        or not status.tool
+        or len(status.tool) > 100
+        or (status.preview is not None and len(status.preview) > 500)
+        or (
+            status.phase == "completed"
+            and (status.duration is None or status.error is None)
+        )
+        or (
+            status.phase == "started"
+            and (status.duration is not None or status.error is not None)
+        )
+    ):
+        raise ValueError("Hermes tool status is invalid.")
+    event: dict[str, object] = {
+        "runId": status.run_id,
+        "eventId": status.event_id,
+        "phase": status.phase,
+        "tool": status.tool,
+    }
+    if status.preview is not None:
+        event["preview"] = status.preview
+    if status.phase == "completed":
+        event["duration"] = status.duration
+        event["error"] = status.error
+    payload = json.dumps(event, separators=(",", ":"))
+    if len(payload.encode("utf-8")) > _MAX_APPROVAL_PAYLOAD_BYTES:
+        raise ValueError("Hermes tool status exceeds the transport limit.")
+    await room.local_participant.publish_data(
+        payload,
+        reliable=True,
+        destination_identities=[owner],
+        topic="hermes.tool.status",
     )
 
 
@@ -199,8 +242,13 @@ async def run() -> None:
         async def approval_resolved(resolution: ApprovalResolution) -> None:
             await publish_approval_resolution(room, owner, resolution)
 
+        async def tool_status(status: ToolStatus) -> None:
+            await publish_tool_status(room, owner, status)
+
         speech, language_model = await configured_ai(
-            on_approval=approval, on_approval_resolved=approval_resolved
+            on_approval=approval,
+            on_approval_resolved=approval_resolved,
+            on_tool_status=tool_status,
         )
         if provider_choices()[1] in ("copilot", "codex"):
             from examples.agent_llm import AgentLLM

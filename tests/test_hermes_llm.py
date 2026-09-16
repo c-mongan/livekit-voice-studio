@@ -10,7 +10,13 @@ import pytest
 from livekit.agents import APIConnectOptions, APIError, llm
 
 from examples.hermes_api import HermesAPIError, RunEvent, RunHandle
-from examples.hermes_llm import ApprovalRequest, ApprovalResolution, HermesLLM, _RunState
+from examples.hermes_llm import (
+    ApprovalRequest,
+    ApprovalResolution,
+    HermesLLM,
+    ToolStatus,
+    _RunState,
+)
 
 
 class FakeClient:
@@ -104,6 +110,56 @@ async def test_model_close_closes_credential_bearing_client(client: FakeClient) 
     assert client.closed
 
 
+async def test_model_close_stops_active_run_before_closing_client(client: FakeClient) -> None:
+    client.runs = [[]]
+    client.block_events = True
+    client.statuses["run_1"] = [{"status": "running"}, {"status": "cancelled"}]
+    order: list[str] = []
+    original_stop = client.stop
+    original_close = client.aclose
+
+    async def stop(run_id: str) -> dict[str, object]:
+        order.append(f"stop:{run_id}")
+        return await original_stop(run_id)
+
+    async def close() -> None:
+        order.append("close")
+        await original_close()
+
+    client.stop = stop  # type: ignore[method-assign]
+    client.aclose = close  # type: ignore[method-assign]
+    model = HermesLLM(client=client, on_approval=AsyncMock())
+    stream = model.chat(chat_ctx=context(("user", "one")))
+    task = asyncio.create_task(collect(stream))
+    await client.started.wait()
+
+    await model.aclose()
+    await task
+
+    assert order == ["stop:run_1", "close"]
+    assert client.stopped == ["run_1"]
+
+
+async def test_model_close_surfaces_unacknowledged_active_run_after_client_close(
+    client: FakeClient,
+) -> None:
+    client.config.stop_timeout = 0.01
+    client.runs = [[]]
+    client.block_events = True
+    client.statuses["run_1"] = [{"status": "running"}]
+    model = HermesLLM(client=client, on_approval=AsyncMock())
+    stream = model.chat(chat_ctx=context(("user", "one")))
+    task = asyncio.create_task(collect(stream))
+    await client.started.wait()
+
+    with pytest.raises(APIError, match="terminal acknowledgement"):
+        await model.aclose()
+
+    assert client.closed
+    assert client.stopped == ["run_1"]
+    await task
+
+
 async def test_empty_user_turn_and_livekit_tools_are_rejected(client: FakeClient) -> None:
     model = HermesLLM(client=client, on_approval=AsyncMock())
 
@@ -132,6 +188,52 @@ async def test_only_one_stream_starts_and_waiting_close_does_not_stop_owner(
     assert client.stopped == []
     await first.aclose()
     assert client.stopped == ["run_1"]
+
+
+async def test_third_stream_is_rejected_while_one_is_active_and_one_waits(
+    client: FakeClient,
+) -> None:
+    client.runs = [[], []]
+    client.block_events = True
+    client.statuses["run_1"] = [{"status": "cancelled"}]
+    model = HermesLLM(client=client, on_approval=AsyncMock())
+    first = model.chat(chat_ctx=context(("user", "one")))
+    await client.started.wait()
+    second = model.chat(chat_ctx=context(("user", "two")))
+
+    with pytest.raises(APIError, match="one pending"):
+        model.chat(chat_ctx=context(("user", "three")))
+
+    await second.aclose()
+    await first.aclose()
+
+
+async def test_acknowledged_interruption_adds_trusted_context_to_next_run_once(
+    client: FakeClient,
+) -> None:
+    client.runs = [
+        [],
+        [RunEvent("run.completed", {"status": "completed"})],
+        [RunEvent("run.completed", {"status": "completed"})],
+    ]
+    client.block_events = True
+    client.statuses["run_1"] = [{"status": "cancelled"}]
+    model = HermesLLM(client=client, on_approval=AsyncMock())
+    first = model.chat(chat_ctx=context(("user", "start")))
+    first_task = asyncio.create_task(collect(first))
+    await client.started.wait()
+    assert await model.stop_active() is True
+    await first.aclose()
+    await first_task
+    client.block_events = False
+
+    await collect(model.chat(chat_ctx=context(("user", "user text"))))
+    await collect(model.chat(chat_ctx=context(("user", "later"))))
+
+    assert client.starts[1]["text"] == (
+        "Voice context: previous spoken reply was interrupted.\n\nUser: user text"
+    )
+    assert client.starts[2]["text"] == "later"
 
 
 async def test_cancellation_stops_exact_active_run(client: FakeClient) -> None:
@@ -306,6 +408,54 @@ async def test_stale_run_events_and_non_text_payloads_are_never_spoken(client: F
     assert [chunk.delta.content for chunk in chunks if chunk.delta] == ["safe"]
 
 
+async def test_only_bounded_authoritative_tool_status_is_forwarded(client: FakeClient) -> None:
+    on_tool_status = AsyncMock()
+    client.runs = [[
+        RunEvent(
+            "tool.started",
+            {"run_id": "run_1", "tool": "read_file", "preview": "fixture.txt", "args": "SECRET"},
+        ),
+        RunEvent(
+            "tool.completed",
+            {
+                "run_id": "run_1",
+                "tool": "read_file",
+                "preview": "HERMES-LIVE-FIXTURE-7F31",
+                "duration": 0.125,
+                "error": False,
+                "result": "SECRET",
+            },
+        ),
+        RunEvent("tool.failed", {"run_id": "run_1", "result": "SECRET"}),
+        RunEvent("run.completed", {"run_id": "run_1", "status": "completed"}),
+    ]]
+    model = HermesLLM(
+        client=client,
+        on_approval=AsyncMock(),
+        on_tool_status=on_tool_status,
+    )
+
+    await collect(model.chat(chat_ctx=context(("user", "one"))))
+
+    assert on_tool_status.await_args_list == [
+        ((ToolStatus("run_1", "run_1:1", "started", "read_file", "fixture.txt"),), {}),
+        (
+            (
+                ToolStatus(
+                    "run_1",
+                    "run_1:2",
+                    "completed",
+                    "read_file",
+                    "HERMES-LIVE-FIXTURE-7F31",
+                    0.125,
+                    False,
+                ),
+            ),
+            {},
+        ),
+    ]
+
+
 async def test_sse_eof_is_reconciled_with_one_status_poll(client: FakeClient) -> None:
     client.runs = [[]]
     client.statuses["run_1"] = [{"status": "completed"}]
@@ -437,12 +587,13 @@ async def test_approval_response_requires_current_exact_request_and_choice(
     with pytest.raises(APIError, match="approval choice"):
         await model.respond_to_approval("run_1", "req_1", "always")
     await model.respond_to_approval("run_1", "req_1", "once")
-    with pytest.raises(APIError, match="approval request"):
+    with pytest.raises(APIError, match="already being processed"):
         await model.respond_to_approval("run_1", "req_1", "once")
     assert client.approvals == [("run_1", "req_1", "once")]
-    on_resolved.assert_awaited_once_with(ApprovalResolution("run_1", "req_1"))
+    on_resolved.assert_not_awaited()
     continue_events.set()
     await task
+    on_resolved.assert_awaited_once_with(ApprovalResolution("run_1", "req_1"))
     with pytest.raises(APIError, match="approval request"):
         await model.respond_to_approval("run_1", "req_1", "once")
 
@@ -487,7 +638,7 @@ async def test_failed_approval_response_can_be_retried(client: FakeClient) -> No
 
     await model.respond_to_approval("run_1", "req_1", "once")
     assert attempts == [("run_1", "req_1", "once"), ("run_1", "req_1", "once")]
-    on_resolved.assert_awaited_once_with(ApprovalResolution("run_1", "req_1"))
+    on_resolved.assert_not_awaited()
 
     continue_events.set()
     await task
@@ -580,10 +731,49 @@ async def test_simultaneous_approval_responses_reach_hermes_once(client: FakeCli
 
     finish_approve.set()
     await first_response
-    on_resolved.assert_awaited_once_with(ApprovalResolution("run_1", "req_1"))
+    on_resolved.assert_not_awaited()
     continue_events.set()
     await stream_task
-    on_resolved.assert_awaited_once()
+    on_resolved.assert_awaited_once_with(ApprovalResolution("run_1", "req_1"))
+
+
+async def test_failed_resolution_publication_retains_request_for_terminal_retry(
+    client: FakeClient,
+) -> None:
+    approval_seen = asyncio.Event()
+    emit_responded = asyncio.Event()
+
+    async def events(_run_id: str) -> AsyncIterator[RunEvent]:
+        yield RunEvent(
+            "approval.request",
+            {
+                "run_id": "run_1",
+                "request_id": "req_1",
+                "command": "safe",
+                "choices": ["deny"],
+            },
+        )
+        approval_seen.set()
+        await emit_responded.wait()
+        yield RunEvent("approval.responded", {"run_id": "run_1", "request_id": "req_1"})
+
+    resolutions = AsyncMock(side_effect=[RuntimeError("publish failed"), None])
+    client.events = events  # type: ignore[method-assign]
+    client.statuses["run_1"] = [{"status": "cancelled"}]
+    model = HermesLLM(
+        client=client,
+        on_approval=AsyncMock(),
+        on_approval_resolved=resolutions,
+    )
+    task = asyncio.create_task(collect(model.chat(chat_ctx=context(("user", "one")))))
+    await approval_seen.wait()
+    await model.respond_to_approval("run_1", "req_1", "deny")
+    emit_responded.set()
+
+    with pytest.raises(APIError, match="resolution"):
+        await task
+
+    assert resolutions.await_count == 2
 
 
 async def test_duplicate_approval_request_id_fails_closed(client: FakeClient) -> None:

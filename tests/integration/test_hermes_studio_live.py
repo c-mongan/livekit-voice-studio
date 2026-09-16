@@ -70,6 +70,7 @@ class _ObservationBoundary:
 class _ObservationLog:
     transcriptions: list[_ObservedTranscription] = field(default_factory=list)
     nonzero_audio_at: list[float] = field(default_factory=list)
+    tool_statuses: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def transcript_count(self) -> int:
@@ -84,6 +85,9 @@ class _ObservationLog:
 
     def record_nonzero_audio(self, observed_at: float) -> None:
         self.nonzero_audio_at.append(observed_at)
+
+    def record_tool_status(self, status: dict[str, Any]) -> None:
+        self.tool_statuses.append(status.copy())
 
     def boundary(self, observed_at: float) -> _ObservationBoundary:
         return _ObservationBoundary(
@@ -112,6 +116,29 @@ def _streamed_assistant_text_observed(
     return expected.casefold() in non_final_text.casefold()
 
 
+def _completed_tool_status_observed(observations: _ObservationLog, marker: str) -> bool:
+    return any(
+        status.get("phase") == "completed"
+        and status.get("error") is False
+        and isinstance(status.get("preview"), str)
+        and marker.casefold() in status["preview"].casefold()
+        for status in observations.tool_statuses
+    )
+
+
+def _retired_text_absent_after(
+    observations: _ObservationLog,
+    boundary: _ObservationBoundary,
+    agent_identity: str,
+    marker: str,
+) -> bool:
+    return not any(
+        event.participant_identity == agent_identity
+        and marker.casefold() in event.text.casefold()
+        for event in observations.transcriptions[boundary.transcript_count :]
+    )
+
+
 def _assert_interruption_evidence(
     observations: _ObservationLog,
     retired_start: _ObservationBoundary,
@@ -135,12 +162,9 @@ def _assert_interruption_evidence(
         "No retired-run audio was observed before interruption."
     )
 
-    after = observations.transcriptions[boundary.transcript_count :]
-    assert not any(
-        event.participant_identity == agent_identity
-        and marker.casefold() in event.text.casefold()
-        for event in after
-    ), "Observed retired Hermes text after the stop boundary."
+    assert _retired_text_absent_after(observations, boundary, agent_identity, marker), (
+        "Observed retired Hermes text after the stop boundary."
+    )
 
     audio_end_count = audio_end.audio_count if audio_end is not None else None
     post_stop_audio = observations.nonzero_audio_at[boundary.audio_count : audio_end_count]
@@ -293,13 +317,20 @@ async def test_continuous_hermes_room_tools_approval_interrupt_continuity_and_dr
             return
         if packet.participant.identity != details["agentIdentity"]:
             return
-        if packet.topic not in {"hermes.approval.request", "hermes.approval.resolved"}:
+        if packet.topic not in {
+            "hermes.approval.request",
+            "hermes.approval.resolved",
+            "hermes.tool.status",
+        }:
             return
         try:
             payload = json.loads(packet.data)
         except (UnicodeDecodeError, json.JSONDecodeError):
             return
         if isinstance(payload, dict):
+            if packet.topic == "hermes.tool.status":
+                observations.record_tool_status(payload)
+                return
             queue = approvals if packet.topic == "hermes.approval.request" else resolutions
             queue.put_nowait(payload)
 
@@ -367,6 +398,11 @@ async def test_continuous_hermes_room_tools_approval_interrupt_continuity_and_dr
             fixture_marker,
         )
         await wait_listening()
+        await _wait_until(
+            lambda: _completed_tool_status_observed(observations, fixture_marker),
+            seconds=15,
+            message="No successful completed Hermes tool status reported the fixture result.",
+        )
 
         # The selected test profile must require approval for this sandboxed fixture command.
         await room.local_participant.send_text(
@@ -492,12 +528,19 @@ async def test_continuous_hermes_room_tools_approval_interrupt_continuity_and_dr
             marker="RETIRE-ME",
             silence_limit_seconds=0.2,
         )
+        action_truth_observed = _completed_tool_status_observed(observations, fixture_marker)
+        no_retired_deltas = _retired_text_absent_after(
+            observations, stop_boundary, agent_identity, "RETIRE-ME"
+        )
+        assert action_truth_observed
+        assert no_retired_deltas
 
         assert studio.metrics["llmFirstTokenSeconds"] is not None
         assert studio.metrics["ttsFirstFrameSeconds"] is not None
         report = {
             "hermes_live_vertical_slice": {
                 "approval_denied": True,
+                "completed_action_reported": action_truth_observed,
                 "continuity_verified": True,
                 "end_of_utterance_seconds": studio.metrics["endOfUtteranceSeconds"],
                 "hermes_terminal_after_stop": interrupt["hermesTerminalAcknowledged"],
@@ -506,7 +549,7 @@ async def test_continuous_hermes_room_tools_approval_interrupt_continuity_and_dr
                 "nemotron_final_transcription_seconds": studio.metrics[
                     "transcriptionDelaySeconds"
                 ],
-                "no_retired_deltas": True,
+                "no_retired_deltas": no_retired_deltas,
                 "qwen_first_audio_p95_seconds": round(warm_p95, 6),
                 "stop_to_silence_seconds": round(stop_to_silence, 6),
             }

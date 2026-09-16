@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any, Never
+from typing import Any, Literal, Never
 
 from livekit.agents import APIConnectOptions, APIError, llm
 from livekit.agents.types import DEFAULT_API_CONNECT_OPTIONS, NOT_GIVEN, NotGivenOr
@@ -14,6 +15,7 @@ from livekit.agents.types import DEFAULT_API_CONNECT_OPTIONS, NOT_GIVEN, NotGive
 from examples.hermes_api import HermesRunsClient, RunEvent
 
 _TERMINAL_STATES = frozenset({"completed", "failed", "cancelled", "interrupted"})
+_INTERRUPTION_CONTEXT = "Voice context: previous spoken reply was interrupted."
 
 
 class _AdapterAPIError(APIError):
@@ -38,6 +40,17 @@ class ApprovalResolution:
     request_id: str
 
 
+@dataclass(frozen=True)
+class ToolStatus:
+    run_id: str
+    event_id: str
+    phase: Literal["started", "completed"]
+    tool: str
+    preview: str | None = None
+    duration: float | None = None
+    error: bool | None = None
+
+
 @dataclass
 class _RunState:
     run_id: str
@@ -45,6 +58,7 @@ class _RunState:
     stop_requested: bool = False
     stop_sent: bool = False
     terminal: bool = False
+    status_sequence: int = 0
     approval_ids: set[str] = field(default_factory=set)
     stop_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
@@ -74,6 +88,7 @@ class HermesLLM(llm.LLM[Never]):
         client: HermesRunsClient,
         on_approval: Callable[[ApprovalRequest], Awaitable[None]],
         on_approval_resolved: Callable[[ApprovalResolution], Awaitable[None]] | None = None,
+        on_tool_status: Callable[[ToolStatus], Awaitable[None]] | None = None,
         max_response_chars: int = 32_000,
     ) -> None:
         super().__init__()
@@ -82,6 +97,7 @@ class HermesLLM(llm.LLM[Never]):
         self._client = client
         self._on_approval = on_approval
         self._on_approval_resolved = on_approval_resolved
+        self._on_tool_status = on_tool_status
         self._max_response_chars = max_response_chars
         self._run_lock = asyncio.Lock()
         self._generation = 0
@@ -89,6 +105,9 @@ class HermesLLM(llm.LLM[Never]):
         self._run_handle_owner = object()
         self._pending_approvals: dict[str, _PendingApproval] = {}
         self._uncertain = False
+        self._stream_slots = 0
+        self._streams: set[_HermesStream] = set()
+        self._interruption_context_pending = False
 
     @property
     def provider(self) -> str:
@@ -127,7 +146,16 @@ class HermesLLM(llm.LLM[Never]):
         self._check_ready()
         if tools:
             raise _error("Hermes owns tools; LiveKit tools are not accepted.")
-        return _HermesStream(self, chat_ctx=chat_ctx.copy(), conn_options=conn_options)
+        if self._stream_slots >= 2:
+            raise _error("Hermes allows one active and one pending voice turn.")
+        self._stream_slots += 1
+        try:
+            stream = _HermesStream(self, chat_ctx=chat_ctx.copy(), conn_options=conn_options)
+            self._streams.add(stream)
+            return stream
+        except BaseException:
+            self._stream_slots -= 1
+            raise
 
     async def respond_to_approval(self, run_id: str, request_id: str, choice: str) -> None:
         self._check_ready()
@@ -157,9 +185,7 @@ class HermesLLM(llm.LLM[Never]):
             if self._pending_approvals.get(request_id) is pending:
                 pending.in_flight = False
             raise _error("Hermes approval response failed.") from None
-        if self._pending_approvals.get(request_id) is pending:
-            self._pending_approvals.pop(request_id)
-            await self._notify_resolution(state.run_id, request_id)
+
 
     async def stop_active(self) -> bool:
         state = self._active
@@ -176,7 +202,10 @@ class HermesLLM(llm.LLM[Never]):
         if state.run_id != run.run_id:
             return False
         state.stop_requested = True
-        return await self._stop_and_wait(state)
+        acknowledged = await self._stop_and_wait(state)
+        if acknowledged:
+            self._interruption_context_pending = True
+        return acknowledged
 
     async def _stop_and_wait(self, state: _RunState) -> bool:
         async with state.stop_lock:
@@ -220,22 +249,33 @@ class HermesLLM(llm.LLM[Never]):
             for request_id, pending in self._pending_approvals.items()
             if pending.state is state
         ]
-        for request_id in request_ids:
-            self._pending_approvals.pop(request_id, None)
         failed = False
         for request_id in request_ids:
             try:
                 await self._notify_resolution(state.run_id, request_id)
             except _AdapterAPIError:
                 failed = True
+            else:
+                self._pending_approvals.pop(request_id, None)
         if failed:
             raise _error("Hermes approval resolutions could not be published.")
 
     async def aclose(self) -> None:
+        unsafe = False
+        state = self._active
         try:
+            if state is not None and not state.terminal:
+                state.stop_requested = True
+                unsafe = not await self._stop_and_wait(state)
+            await asyncio.gather(
+                *(stream.aclose() for stream in tuple(self._streams)),
+                return_exceptions=True,
+            )
             await super().aclose()
         finally:
             await self._client.aclose()
+        if unsafe:
+            raise _error("Hermes run closed without terminal acknowledgement.")
 
 
 class _HermesStream(llm.LLMStream):
@@ -296,6 +336,55 @@ class _HermesStream(llm.LLMStream):
             ApprovalRequest(state.run_id, request_id, command, exact_choices)
         )
 
+    async def _forward_tool_status(self, event: RunEvent, state: _RunState) -> None:
+        callback = self._owner._on_tool_status
+        if callback is None:
+            return
+        payload = event.payload
+        tool = payload.get("tool")
+        preview = payload.get("preview")
+        if (
+            not isinstance(tool, str)
+            or not tool
+            or len(tool) > 100
+            or (preview is not None and (not isinstance(preview, str) or len(preview) > 500))
+        ):
+            raise _error("Hermes returned an invalid tool status.")
+        phase: Literal["started", "completed"]
+        duration: float | None = None
+        error: bool | None = None
+        if event.type == "tool.started":
+            phase = "started"
+        elif event.type == "tool.completed":
+            raw_duration = payload.get("duration")
+            raw_error = payload.get("error")
+            if (
+                isinstance(raw_duration, bool)
+                or not isinstance(raw_duration, (int, float))
+                or not math.isfinite(raw_duration)
+                or raw_duration < 0
+                or raw_duration > 86_400
+                or not isinstance(raw_error, bool)
+            ):
+                raise _error("Hermes returned an invalid tool status.")
+            phase = "completed"
+            duration = float(raw_duration)
+            error = raw_error
+        else:
+            return
+        state.status_sequence += 1
+        await callback(
+            ToolStatus(
+                state.run_id,
+                f"{state.run_id}:{state.status_sequence}",
+                phase,
+                tool,
+                preview,
+                duration,
+                error,
+            )
+        )
+
     async def _consume(self, state: _RunState) -> None:
         owner = self._owner
         response_size = 0
@@ -309,9 +398,9 @@ class _HermesStream(llm.LLMStream):
                 state.terminal = True
                 await owner._clear_approvals(state)
                 break
-            if state.stop_requested:
-                continue
             if event.type == "message.delta":
+                if state.stop_requested:
+                    continue
                 content = event.payload.get("delta")
                 if not isinstance(content, str) or not content:
                     continue
@@ -325,14 +414,17 @@ class _HermesStream(llm.LLMStream):
                     )
                 )
             elif event.type == "approval.request":
-                await self._forward_approval(event, state)
+                if not state.stop_requested:
+                    await self._forward_approval(event, state)
             elif event.type == "approval.responded":
                 request_id = event.payload.get("request_id")
                 if isinstance(request_id, str):
                     pending = owner._pending_approvals.get(request_id)
                     if pending is not None and pending.state is state:
-                        owner._pending_approvals.pop(request_id, None)
                         await owner._notify_resolution(state.run_id, request_id)
+                        owner._pending_approvals.pop(request_id, None)
+            elif event.type in {"tool.started", "tool.completed"}:
+                await self._forward_tool_status(event, state)
 
         if terminal is None:
             status = await owner._client.status(state.run_id)
@@ -350,14 +442,29 @@ class _HermesStream(llm.LLMStream):
         raise _error("Hermes run did not complete successfully.")
 
     async def _run(self) -> None:
+        try:
+            await self._run_reserved()
+        finally:
+            self._owner._stream_slots -= 1
+            self._owner._streams.discard(self)
+
+    async def _run_reserved(self) -> None:
         owner = self._owner
         async with owner._run_lock:
             owner._check_ready()
             text = self._latest_user_text(self._chat_ctx)
+            request_text = (
+                f"{_INTERRUPTION_CONTEXT}\n\nUser: {text}"
+                if owner._interruption_context_pending
+                else text
+            )
             owner._generation += 1
             generation = owner._generation
             try:
-                handle = await owner._client.start(text, idempotency_key=uuid.uuid4().hex)
+                handle = await owner._client.start(
+                    request_text, idempotency_key=uuid.uuid4().hex
+                )
+                owner._interruption_context_pending = False
             except asyncio.CancelledError:
                 owner._uncertain = True
                 raise

@@ -16,7 +16,7 @@ from livekit.plugins import openai, silero, voicebox
 from livekit.plugins.voicebox.errors import VoiceboxError
 
 from examples.hermes_api import HermesAPIError, HermesConfig, HermesRunsClient
-from examples.hermes_llm import ApprovalRequest, ApprovalResolution, HermesLLM
+from examples.hermes_llm import ApprovalRequest, ApprovalResolution, HermesLLM, ToolStatus
 
 server = AgentServer(host="127.0.0.1")
 logger = logging.getLogger("voicebox.example")
@@ -91,6 +91,7 @@ async def configured_ai(
     *,
     on_approval: Callable[[ApprovalRequest], Awaitable[None]] | None = None,
     on_approval_resolved: Callable[[ApprovalResolution], Awaitable[None]] | None = None,
+    on_tool_status: Callable[[ToolStatus], Awaitable[None]] | None = None,
 ) -> tuple[stt.STT[Never], llm.LLM[Never]]:
     speech_choice, reasoning_choice = provider_choices()
     if speech_choice not in ("azure", "openai", "nemotron"):
@@ -108,6 +109,7 @@ async def configured_ai(
                 client=client,
                 on_approval=on_approval or _unwired_approval,
                 on_approval_resolved=on_approval_resolved,
+                on_tool_status=on_tool_status,
             )
         except BaseException:
             await client.aclose()

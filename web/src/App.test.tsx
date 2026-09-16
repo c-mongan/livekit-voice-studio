@@ -344,7 +344,7 @@ describe('microphone, playback and lifecycle controls', () => {
     });
     expect(mocks.mute).toHaveBeenLastCalledWith(true);
     expect(button('Stopping…').disabled).toBe(true);
-    await act(async () => ack.resolve(JSON.stringify({ stoppedPlayback: true, hermesStopRequested: true, actionUndone: false, backendState: 'ready' })));
+    await act(async () => ack.resolve(JSON.stringify({ stoppedPlayback: true, hermesStopRequested: true, hermesTerminalAcknowledged: true, actionUndone: false, backendState: 'ready' })));
     expect(mocks.mute).toHaveBeenLastCalledWith(false);
     expect(button('Stop reply').disabled).toBe(false);
     expect(host.textContent).toContain('Speech stopped. Any completed Hermes action remains completed.');
@@ -377,6 +377,43 @@ describe('microphone, playback and lifecycle controls', () => {
     expect(host.textContent).not.toContain('RPC secret');
     await click(button('End session'));
     expect(mocks.studio.end).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps Hermes input and playback locked when stop acknowledgement is unavailable', async () => {
+    connect();
+    mocks.studio.status.ai.provider = 'hermes';
+    mocks.agent.state = 'thinking';
+    mocks.local.localParticipant.performRpc.mockRejectedValueOnce(new Error('RPC secret'));
+    await mount();
+    await type('must stay blocked');
+    await click(button('Stop reply'));
+
+    expect(mocks.mute).toHaveBeenLastCalledWith(true);
+    expect(host.querySelector('.session-status')?.textContent).toContain('Needs attention');
+    expect(button('Send').disabled).toBe(true);
+    expect(button('Turn mic on').disabled).toBe(true);
+  });
+
+  it('fails closed when Hermes stop is requested without terminal acknowledgement', async () => {
+    connect();
+    mocks.agent.state = 'speaking';
+    mocks.local.localParticipant.performRpc.mockResolvedValueOnce(JSON.stringify({
+      stoppedPlayback: true,
+      hermesStopRequested: true,
+      hermesTerminalAcknowledged: false,
+      actionUndone: false,
+      backendState: 'ready',
+    }));
+    await mount();
+    await type('must stay blocked');
+    await click(button('Stop reply'));
+
+    expect(mocks.mute).toHaveBeenLastCalledWith(true);
+    expect(host.querySelector('.session-status')?.textContent).toContain('Needs attention');
+    expect(host.querySelector('[role=alert]')?.textContent).toContain('could not confirm Hermes stopped');
+    expect(button('Send').disabled).toBe(true);
+    expect(button('Turn mic on').disabled).toBe(true);
+    expect(button('End session').disabled).toBe(false);
   });
 
   it('disables sending and mic during reconnect, and blocks new starts during draining', async () => {
@@ -425,6 +462,12 @@ describe('Hermes approval flow', () => {
     ));
   }
 
+  async function receiveTool(value: object, sender = testGrant.agentIdentity) {
+    await act(async () => mocks.roomHandlers.dataReceived(
+      new TextEncoder().encode(JSON.stringify(value)), { identity: sender }, 0, 'hermes.tool.status',
+    ));
+  }
+
   it('accepts requests only from the granted agent and sends exact owner RPC data', async () => {
     connect();
     await mount();
@@ -442,7 +485,45 @@ describe('Hermes approval flow', () => {
       payload: JSON.stringify({ runId: 'run-approval', requestId: 'request-approval', choice: 'deny' }),
       responseTimeout: 5_000,
     });
+    expect(host.textContent).toContain('rm redacted-file');
+    expect(button('Deny').disabled).toBe(true);
+    await resolve({ runId: approval.runId, requestId: approval.requestId });
     expect(host.textContent).not.toContain('rm redacted-file');
+  });
+
+  it('pauses typed and microphone input while approval remains authoritative', async () => {
+    connect();
+    mocks.local.isMicrophoneEnabled = true;
+    await mount();
+    await type('do not send');
+    await receive(approval);
+
+    expect(button('Send').disabled).toBe(true);
+    expect(button('Turn mic off').disabled).toBe(true);
+    expect(mocks.local.localParticipant.setMicrophoneEnabled).toHaveBeenCalledWith(false);
+  });
+
+  it('keeps completed action status visible after an acknowledged interruption', async () => {
+    connect();
+    mocks.agent.state = 'speaking';
+    mocks.local.localParticipant.performRpc.mockResolvedValueOnce(JSON.stringify({
+      stoppedPlayback: true,
+      hermesStopRequested: true,
+      hermesTerminalAcknowledged: true,
+      actionUndone: false,
+      backendState: 'ready',
+    }));
+    await mount();
+    await receiveTool({
+      runId: 'run-tool', eventId: 'run-tool:2', phase: 'completed', tool: 'read_file',
+      preview: 'HERMES-LIVE-FIXTURE-7F31', duration: 0.125, error: false,
+    });
+    expect(host.querySelector('.hermes-actions')?.textContent).toContain('HERMES-LIVE-FIXTURE-7F31');
+
+    await click(button('Stop reply'));
+
+    expect(host.querySelector('.hermes-actions')?.textContent).toContain('Completed');
+    expect(host.querySelector('.hermes-actions')?.textContent).toContain('HERMES-LIVE-FIXTURE-7F31');
   });
 
   it('clears only the exact approval named by a terminal event', async () => {

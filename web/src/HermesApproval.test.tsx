@@ -2,7 +2,12 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { parseHermesApprovalRequest, parseHermesApprovalResolution, type HermesApprovalRequest } from './api';
+import {
+  parseHermesApprovalRequest,
+  parseHermesApprovalResolution,
+  parseHermesToolStatus,
+  type HermesApprovalRequest,
+} from './api';
 import { HermesApproval } from './HermesApproval';
 import { deferred } from './test-fixtures';
 
@@ -53,11 +58,22 @@ describe('approval payload validation', () => {
     expect(parseHermesApprovalResolution(new TextEncoder().encode(JSON.stringify({ ...resolution, requestId: 'x'.repeat(201) })))).toBeNull();
     expect(parseHermesApprovalResolution(new Uint8Array(4097))).toBeNull();
   });
+
+  it('accepts only the bounded allowlisted Hermes tool status projection', () => {
+    const status = {
+      runId: 'run-1', eventId: 'run-1:2', phase: 'completed', tool: 'read_file',
+      preview: 'redacted result', duration: 0.25, error: false,
+    };
+    expect(parseHermesToolStatus(new TextEncoder().encode(JSON.stringify(status)))).toEqual(status);
+    expect(parseHermesToolStatus(new TextEncoder().encode(JSON.stringify({ ...status, result: 'SECRET' })))).toBeNull();
+    expect(parseHermesToolStatus(new TextEncoder().encode(JSON.stringify({ ...status, preview: 'x'.repeat(501) })))).toBeNull();
+    expect(parseHermesToolStatus(new TextEncoder().encode(JSON.stringify({ ...status, phase: 'failed' })))).toBeNull();
+  });
 });
 
 describe('HermesApproval', () => {
   it('renders only advertised choices and focuses Deny by default', async () => {
-    await render(<HermesApproval request={request} onRespond={vi.fn()} onAccepted={vi.fn()} />);
+    await render(<HermesApproval request={request} onRespond={vi.fn()} />);
     expect(host.textContent).toContain('rm redacted-file');
     expect(button('Allow once')).toBeDefined();
     expect(button('Deny')).toBe(document.activeElement);
@@ -68,20 +84,20 @@ describe('HermesApproval', () => {
   it('disables every choice until acknowledgement and announces success', async () => {
     const ack = deferred<void>();
     const respond = vi.fn(() => ack.promise);
-    const accepted = vi.fn();
-    await render(<HermesApproval request={request} onRespond={respond} onAccepted={accepted} />);
+    await render(<HermesApproval request={request} onRespond={respond} />);
 
     await act(async () => button('Allow once').click());
     expect([...host.querySelectorAll('button')].every((item) => item.disabled)).toBe(true);
     expect(respond).toHaveBeenCalledExactlyOnceWith(request, 'once');
     await act(async () => ack.resolve());
     expect(host.querySelector('[role=status]')?.textContent).toContain('Response accepted');
-    expect(accepted).toHaveBeenCalledExactlyOnceWith(request);
+    expect(host.textContent).toContain('rm redacted-file');
+    expect(host.querySelector('[role=status]')?.textContent).toContain('Waiting for Hermes');
   });
 
   it('announces a safe failure and permits a retry', async () => {
     const respond = vi.fn().mockRejectedValue(new Error('private RPC details'));
-    await render(<HermesApproval request={request} onRespond={respond} onAccepted={vi.fn()} />);
+    await render(<HermesApproval request={request} onRespond={respond} />);
 
     await act(async () => button('Deny').click());
     expect(host.querySelector('[role=alert]')?.textContent).toContain('could not be confirmed');

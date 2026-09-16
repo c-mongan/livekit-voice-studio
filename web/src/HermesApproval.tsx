@@ -11,11 +11,9 @@ const LABELS: Record<HermesApprovalChoice, string> = {
 export function HermesApproval({
   request,
   onRespond,
-  onAccepted,
 }: {
   request: HermesApprovalRequest;
   onRespond: (request: HermesApprovalRequest, choice: HermesApprovalChoice) => Promise<void>;
-  onAccepted: (request: HermesApprovalRequest) => void;
 }) {
   const [pending, setPending] = useState(false);
   const [result, setResult] = useState<{ kind: 'status' | 'alert'; message: string } | null>(null);
@@ -37,8 +35,7 @@ export function HermesApproval({
     try {
       await onRespond(request, choice);
       if (current.current !== requestKey) return;
-      setResult({ kind: 'status', message: 'Response accepted.' });
-      onAccepted(request);
+      setResult({ kind: 'status', message: 'Response accepted. Waiting for Hermes to confirm the result.' });
     } catch {
       if (current.current !== requestKey) return;
       setPending(false);

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type CSSProperties, type Form
 import { StartAudio, useLocalParticipant, useMultibandTrackVolume, useSessionMessages } from '@livekit/components-react';
 import { RoomEvent, type RemoteParticipant } from 'livekit-client';
 import { AgentSessionProvider } from './components/agent-session-provider';
-import { parseHermesApprovalRequest, parseHermesApprovalResolution, measuredSeconds, safeMessage, type HermesApprovalChoice, type HermesApprovalRequest, type StudioStatus } from './api';
+import { parseHermesApprovalRequest, parseHermesApprovalResolution, parseHermesToolStatus, measuredSeconds, safeMessage, type HermesApprovalChoice, type HermesApprovalRequest, type HermesToolStatus, type StudioStatus } from './api';
 import { HermesApproval } from './HermesApproval';
 import { MAX_MESSAGE_LENGTH, mergeTranscript, validMessage, workspaceState, type TranscriptMessage, type WorkspaceState } from './state';
 import { useStudio } from './useStudio';
@@ -95,7 +95,10 @@ function Workspace({ studio, setMuted }: { studio: Studio; setMuted: (muted: boo
   const [messages, setMessages] = useState<TranscriptMessage[]>([]);
   const [announcement, setAnnouncement] = useState('');
   const [approval, setApproval] = useState<HermesApprovalRequest | null>(null);
+  const [toolStatuses, setToolStatuses] = useState<HermesToolStatus[]>([]);
+  const [unsafeStop, setUnsafeStop] = useState(false);
   const resolvedApprovals = useRef(new Set<string>());
+  const toolEventIds = useRef(new Set<string>());
   const cleared = useRef(new Set<string>());
   const sendingRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -109,12 +112,12 @@ function Workspace({ studio, setMuted }: { studio: Studio; setMuted: (muted: boo
     return () => query.removeEventListener('change', update);
   }, []);
 
-  const state = workspaceState({ status, online, starting, ending, owned: !!grant, connection: session.connectionState, agent: agent.state, mic: micEnabled });
+  const state = unsafeStop ? 'blocked' : workspaceState({ status, online, starting, ending, owned: !!grant, connection: session.connectionState, agent: agent.state, mic: micEnabled });
   const sourceTrack = agent.state === 'speaking' ? agent.microphoneTrack : micEnabled ? session.local.microphoneTrack : undefined;
   const bands = useMultibandTrackVolume(reducedMotion ? undefined : sourceTrack, { bands: 36, loPass: 0, hiPass: 200, updateInterval: 60 });
   const canStart = online && status?.ready && status.phase === 'idle' && !grant && !starting && !ending && !auditionBusy;
   const agentReady = connected && agent.isConnected;
-  const canSend = validMessage(draft) && !sending && !pendingText && !starting && !ending && (agentReady || (canStart && consent));
+  const canSend = validMessage(draft) && !sending && !pendingText && !starting && !ending && !approval && !unsafeStop && (agentReady || (canStart && consent));
   const mlx = status?.voice.backend === 'mlx';
   const streaming = mlx && status?.voice.streaming === true;
 
@@ -147,6 +150,13 @@ function Workspace({ studio, setMuted }: { studio: Studio; setMuted: (muted: boo
             ? null
             : current
         ));
+        return;
+      }
+      if (topic === 'hermes.tool.status') {
+        const toolStatus = parseHermesToolStatus(payload);
+        if (!toolStatus || toolEventIds.current.has(toolStatus.eventId)) return;
+        toolEventIds.current.add(toolStatus.eventId);
+        setToolStatuses((current) => [...current, toolStatus].slice(-64));
       }
     };
     session.room.on(RoomEvent.DataReceived, receiveApprovalEvent);
@@ -156,7 +166,10 @@ function Workspace({ studio, setMuted }: { studio: Studio; setMuted: (muted: boo
   useEffect(() => {
     if (!grant || session.connectionState === 'disconnected') {
       setApproval(null);
+      setToolStatuses([]);
+      setUnsafeStop(false);
       resolvedApprovals.current.clear();
+      toolEventIds.current.clear();
     }
   }, [grant, session.connectionState]);
 
@@ -182,9 +195,6 @@ function Workspace({ studio, setMuted }: { studio: Studio; setMuted: (muted: boo
     ) throw new Error('Invalid acknowledgement.');
   }, [grant, local.localParticipant]);
 
-  const clearAcceptedApproval = useCallback((accepted: HermesApprovalRequest) => {
-    setApproval((current) => current?.runId === accepted.runId && current.requestId === accepted.requestId ? null : current);
-  }, []);
 
   useEffect(() => {
     const incoming = chat.messages.map((message) => ({
@@ -237,9 +247,17 @@ function Workspace({ studio, setMuted }: { studio: Studio; setMuted: (muted: boo
     if (!grant) {
       setMuted(false);
     } else {
-      setMuted(interrupting);
+      setMuted(interrupting || unsafeStop || !!approval);
     }
-  }, [grant, interrupting, setMuted]);
+  }, [approval, grant, interrupting, setMuted, unsafeStop]);
+
+  useEffect(() => {
+    if (approval && micEnabled) {
+      void local.localParticipant.setMicrophoneEnabled(false).catch(() => {
+        studio.setError('The microphone could not be paused for approval. End the session before responding.');
+      });
+    }
+  }, [approval, local.localParticipant, micEnabled, studio.setError]);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -253,7 +271,7 @@ function Workspace({ studio, setMuted }: { studio: Studio; setMuted: (muted: boo
   }
 
   async function toggleMic() {
-    if (micBusy || !connected) return;
+    if (micBusy || !connected || !!approval || unsafeStop) return;
     setMicBusy(true);
     studio.setError(null);
     try {
@@ -271,10 +289,31 @@ function Workspace({ studio, setMuted }: { studio: Studio; setMuted: (muted: boo
     setInterrupting(true);
     setMuted(true);
     try {
-      await local.localParticipant.performRpc({ destinationIdentity: grant.agentIdentity, method: 'voicebox.interrupt', payload: '{}', responseTimeout: 5_000 });
+      const response = await local.localParticipant.performRpc({ destinationIdentity: grant.agentIdentity, method: 'voicebox.interrupt', payload: '{}', responseTimeout: 5_000 });
+      const acknowledgement: unknown = JSON.parse(response);
+      if (!acknowledgement || typeof acknowledgement !== 'object' || Array.isArray(acknowledgement)) {
+        throw new Error('Invalid acknowledgement.');
+      }
+      const result = acknowledgement as Record<string, unknown>;
+      const hermesStopRequested = result.hermesStopRequested === true;
+      if (Object.keys(result).length > 0 && (
+        result.actionUndone !== false
+        || result.stoppedPlayback !== true
+        || typeof result.hermesStopRequested !== 'boolean'
+      )) {
+        throw new Error('Invalid acknowledgement.');
+      }
+      if (hermesStopRequested && result.hermesTerminalAcknowledged !== true) {
+        setUnsafeStop(true);
+        studio.setError('The agent could not confirm Hermes stopped. Sending and microphone input remain blocked; use End session.');
+        return;
+      }
       setAnnouncement('Speech stopped. Any completed Hermes action remains completed.');
     } catch {
-      studio.setError('The agent could not confirm the stop request. Use End session to stop all audio.');
+      if (status?.ai.provider === 'hermes') setUnsafeStop(true);
+      studio.setError(status?.ai.provider === 'hermes'
+        ? 'The agent could not confirm Hermes stopped. Sending and microphone input remain blocked; use End session.'
+        : 'The agent could not confirm the stop request. Use End session to stop all audio.');
     } finally {
       setInterrupting(false);
     }
@@ -303,6 +342,7 @@ function Workspace({ studio, setMuted }: { studio: Studio; setMuted: (muted: boo
     'Start a session, then choose text or microphone.';
   if (agent.state === 'failed' && grant) help = 'The agent did not become ready. End this session and check the local worker before retrying.';
   if (interrupting) help = 'Stopping the reply. Speaker audio stays muted until the agent responds or the request times out.';
+  if (unsafeStop) help = 'Hermes stop was not confirmed. Sending and microphone input remain blocked; end this session before continuing.';
 
   return <div className="app-shell">
     <header className="app-header">
@@ -326,7 +366,7 @@ function Workspace({ studio, setMuted }: { studio: Studio; setMuted: (muted: boo
           <div className="voice-controls">
             {!grant && <button className="button primary" disabled={!canStart || !consent} onClick={() => void studio.start()}>{starting ? 'Connecting…' : ending || state === 'draining' ? 'Finishing session…' : 'Start session'}<Icon name="arrow" /></button>}
             {grant && <>
-              <button className={`button ${micEnabled ? 'primary' : 'secondary'}`} disabled={!connected || micBusy || ending} onClick={() => void toggleMic()} aria-pressed={micEnabled}><Icon name="mic" />{micBusy ? 'Updating mic…' : micEnabled ? 'Turn mic off' : 'Turn mic on'}</button>
+              <button className={`button ${micEnabled ? 'primary' : 'secondary'}`} disabled={!connected || micBusy || ending || !!approval || unsafeStop} onClick={() => void toggleMic()} aria-pressed={micEnabled}><Icon name="mic" />{micBusy ? 'Updating mic…' : micEnabled ? 'Turn mic off' : 'Turn mic on'}</button>
               <button className="button secondary" disabled={!connected || !['speaking', 'thinking'].includes(agent.state) || interrupting || ending} onClick={() => void interrupt()}><Icon name="stop" />{interrupting ? 'Stopping…' : 'Stop reply'}</button>
               <button className="button quiet end-session" disabled={ending} onClick={() => { setPendingText(null); void studio.end(); }}><Icon name="close" />{ending ? 'Ending…' : 'End session'}</button>
             </>}
@@ -334,7 +374,7 @@ function Workspace({ studio, setMuted }: { studio: Studio; setMuted: (muted: boo
           {connected && <StartAudio className="button audio-unlock" label="Enable speaker audio" />}
         </div>
         {!grant && <div className="privacy">
-          <label><input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} /><span>I understand that LiveKit carries this conversation and {status?.stt?.local ? 'cloud AI processes conversation text. Speech recognition stays on this machine.' : 'cloud AI processes speech and text.'}</span></label>
+          <label><input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} /><span>I understand that LiveKit carries this conversation and {status?.stt?.local ? 'the configured reasoning provider receives conversation text. Speech recognition stays on this machine.' : 'the configured speech and reasoning providers process speech and text.'}</span></label>
           <p>Speech is generated locally. No microphone access until you turn it on. This page keeps transcripts in memory, not browser storage.</p>
         </div>}
         <div className="notices" aria-live="polite">
@@ -347,8 +387,16 @@ function Workspace({ studio, setMuted }: { studio: Studio; setMuted: (muted: boo
         {approval && <HermesApproval
           request={approval}
           onRespond={respondToApproval}
-          onAccepted={clearAcceptedApproval}
         />}
+        {toolStatuses.length > 0 && <section className="hermes-actions" aria-labelledby="hermes-actions-title">
+          <h2 id="hermes-actions-title">Hermes actions</h2>
+          <ol>
+            {toolStatuses.map((item) => <li key={item.eventId}>
+              <strong>{item.phase === 'completed' ? item.error ? 'Failed' : 'Completed' : 'Started'}: {item.tool}</strong>
+              {item.preview && <span>{item.preview}</span>}
+            </li>)}
+          </ol>
+        </section>}
         <section className="conversation" aria-label="Conversation transcript">
           <div className="transcript-heading"><h2>Conversation</h2><button className="button quiet clear-button" disabled={!messages.length} onClick={clearTranscript}>Clear transcript</button></div>
           <div className="transcript" ref={scrollRef} role="log" aria-label="Conversation messages" aria-live="polite" aria-relevant="additions text" tabIndex={0} onScroll={(event) => {

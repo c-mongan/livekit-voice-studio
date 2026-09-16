@@ -4,7 +4,9 @@ import pytest
 
 from tests.integration.test_hermes_studio_live import (
     _assert_interruption_evidence,
+    _completed_tool_status_observed,
     _ObservationLog,
+    _retired_text_absent_after,
     _streamed_assistant_text_observed,
 )
 
@@ -25,6 +27,34 @@ def test_streamed_text_accepts_expected_text_accumulated_from_non_final_events()
     observations.record_transcription(1.1, "agent", "DY", final=False)
 
     assert _streamed_assistant_text_observed(observations, start, "agent", "READY")
+
+
+def test_action_truth_requires_observed_successful_completed_tool_status() -> None:
+    observations = _ObservationLog()
+    observations.record_tool_status(
+        {"phase": "started", "tool": "read_file", "preview": "HERMES-LIVE-FIXTURE-7F31"}
+    )
+    assert not _completed_tool_status_observed(observations, "HERMES-LIVE-FIXTURE-7F31")
+
+    observations.record_tool_status(
+        {
+            "phase": "completed",
+            "tool": "read_file",
+            "preview": "HERMES-LIVE-FIXTURE-7F31",
+            "error": False,
+        }
+    )
+    assert _completed_tool_status_observed(observations, "HERMES-LIVE-FIXTURE-7F31")
+
+
+def test_stale_truth_is_derived_from_events_after_exact_boundary() -> None:
+    observations = _ObservationLog()
+    observations.record_transcription(1.0, "agent", "RETIRE-ME", final=False)
+    boundary = observations.boundary(1.1)
+    assert _retired_text_absent_after(observations, boundary, "agent", "RETIRE-ME")
+
+    observations.record_transcription(1.2, "agent", "RETIRE-ME", final=True)
+    assert not _retired_text_absent_after(observations, boundary, "agent", "RETIRE-ME")
 
 
 def test_interruption_evidence_rejects_final_only_marker_before_stop() -> None:

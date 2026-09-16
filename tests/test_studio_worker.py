@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from examples import studio_worker
-from examples.hermes_llm import ApprovalRequest, ApprovalResolution, HermesLLM
+from examples.hermes_llm import ApprovalRequest, ApprovalResolution, HermesLLM, ToolStatus
 
 
 async def test_approval_request_is_bounded_and_targeted_to_owner() -> None:
@@ -46,6 +46,24 @@ async def test_approval_resolution_is_exact_reliable_and_targeted_to_owner() -> 
         reliable=True,
         destination_identities=["owner"],
         topic="hermes.approval.resolved",
+    )
+
+
+async def test_tool_status_is_bounded_reliable_and_targeted_to_owner() -> None:
+    participant = SimpleNamespace(publish_data=AsyncMock())
+    room = SimpleNamespace(local_participant=participant)
+    status = ToolStatus(
+        "run-1", "run-1:2", "completed", "read_file", "fixture result", 0.125, False
+    )
+
+    await studio_worker.publish_tool_status(room, "owner", status)
+
+    participant.publish_data.assert_awaited_once_with(
+        '{"runId":"run-1","eventId":"run-1:2","phase":"completed","tool":"read_file",'
+        '"preview":"fixture result","duration":0.125,"error":false}',
+        reliable=True,
+        destination_identities=["owner"],
+        topic="hermes.tool.status",
     )
 
 
@@ -141,6 +159,13 @@ async def test_rpc_registration_follows_connection_and_shutdown_drains(
     async def start(**kwargs):
         assert kwargs["record"] is False
         assert approval_callback is not None
+        assert tool_status_callback is not None
+        await tool_status_callback(
+            ToolStatus("run-tool", "run-tool:1", "completed", "read_file", "fixture", 0.1, False)
+        )
+        tool_status_payload, tool_status_options = handlers["published"]
+        assert json.loads(tool_status_payload)["phase"] == "completed"
+        assert tool_status_options["topic"] == "hermes.tool.status"
         await approval_callback(
             ApprovalRequest("run-approval", "request-approval", "redacted", ("once", "deny"))
         )
@@ -255,11 +280,13 @@ async def test_rpc_registration_follows_connection_and_shutdown_drains(
     model.aclose = AsyncMock()
     approval_callback = None
     resolution_callback = None
+    tool_status_callback = None
 
-    async def configure_ai(*, on_approval=None, on_approval_resolved=None):
-        nonlocal approval_callback, resolution_callback
+    async def configure_ai(*, on_approval=None, on_approval_resolved=None, on_tool_status=None):
+        nonlocal approval_callback, resolution_callback, tool_status_callback
         approval_callback = on_approval
         resolution_callback = on_approval_resolved
+        tool_status_callback = on_tool_status
         return speech, model
 
     monkeypatch.setattr(studio_worker.rtc, "Room", Room)
