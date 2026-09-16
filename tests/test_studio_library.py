@@ -1,11 +1,12 @@
 import io
 import json
+import os
 
 import numpy as np
 import pytest
 import soundfile as sf
 
-from examples.studio_library import LibraryError, StudioLibrary
+from examples.studio_library import LibraryError, StudioLibrary, private_json
 
 
 def recording(seconds=6, value=0.1, channels=1, rate=24000):
@@ -121,6 +122,79 @@ def test_local_defaults_are_explicit_not_a_silent_azure_fallback(tmp_path):
     assert settings["llmProvider"] == "copilot"
     assert settings["llmModel"] == "gpt-5.6-luna"
     assert settings["reasoningEffort"] == "low"
+
+
+def test_existing_settings_gain_hermes_defaults(tmp_path):
+    library = StudioLibrary(tmp_path)
+    private_json(
+        library.settings_path,
+        {
+            "sttProvider": "nemotron",
+            "llmProvider": "copilot",
+            "llmModel": "gpt-5.6-luna",
+            "reasoningEffort": "low",
+            "voiceId": None,
+            "codexRestrictedApproved": False,
+        },
+    )
+
+    settings = library.settings()
+
+    assert settings["hermesProfile"] == "default"
+    assert settings["hermesBaseUrl"] == "http://127.0.0.1:8642"
+
+
+def test_hermes_settings_are_fixed_and_validate_profile_and_url(tmp_path):
+    library = StudioLibrary(tmp_path)
+    hermes = {
+        "llmProvider": "hermes",
+        "llmModel": "profile-default",
+        "reasoningEffort": "none",
+        "hermesProfile": "voice_profile-1",
+        "hermesBaseUrl": "https://hermes.example",
+    }
+    assert library.update_settings(hermes)["hermesProfile"] == "voice_profile-1"
+    for updates, message in (
+        ({"llmModel": "gpt-made-up"}, "Hermes profile"),
+        ({"reasoningEffort": "low"}, "Hermes profile"),
+        ({"hermesProfile": "../private"}, "Hermes profile"),
+        ({"hermesBaseUrl": "http://hermes.example"}, "HTTPS"),
+        ({"hermesBaseUrl": "https://user:secret@hermes.example"}, "origin"),
+    ):
+        with pytest.raises(LibraryError, match=message):
+            library.update_settings({**hermes, **updates})
+
+
+def test_apply_environment_never_persists_or_overwrites_hermes_api_key(tmp_path, monkeypatch):
+    library = StudioLibrary(tmp_path)
+    library.update_settings(
+        {
+            "llmProvider": "hermes",
+            "llmModel": "profile-default",
+            "reasoningEffort": "none",
+            "hermesProfile": "private-profile",
+            "hermesBaseUrl": "https://hermes.example",
+        }
+    )
+    environment_keys = (
+        "VOICEBOX_STT_PROVIDER",
+        "VOICEBOX_LLM_PROVIDER",
+        "VOICEBOX_LLM_MODEL",
+        "VOICEBOX_REASONING_EFFORT",
+        "HERMES_PROFILE",
+        "HERMES_API_BASE_URL",
+        "VOICEBOX_CODEX_RESTRICTED",
+    )
+    for name in environment_keys:
+        monkeypatch.setenv(name, os.environ.get(name, ""))
+    monkeypatch.setenv("HERMES_API_SERVER_KEY", "server-secret")
+
+    library.apply_environment()
+
+    assert os.environ["HERMES_PROFILE"] == "private-profile"
+    assert os.environ["HERMES_API_BASE_URL"] == "https://hermes.example"
+    assert os.environ["HERMES_API_SERVER_KEY"] == "server-secret"
+    assert "server-secret" not in library.settings_path.read_text()
 
 
 def test_azure_preset_accepts_no_effort_and_revokes_codex_consent(tmp_path):

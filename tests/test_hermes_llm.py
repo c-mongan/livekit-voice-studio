@@ -31,6 +31,7 @@ class FakeClient:
         ]
         self.statuses: dict[str, list[dict[str, object]]] = {}
         self.status_calls: list[str] = []
+        self.closed = False
 
     async def start(self, text: str, *, idempotency_key: str) -> RunHandle:
         run_id = f"run_{len(self.starts) + 1}"
@@ -58,6 +59,9 @@ class FakeClient:
 
     async def approve(self, run_id: str, request_id: str, choice: str) -> None:
         self.approvals.append((run_id, request_id, choice))
+
+    async def aclose(self) -> None:
+        self.closed = True
 
 
 @pytest.fixture
@@ -90,6 +94,14 @@ async def test_message_deltas_become_livekit_chunks(client: FakeClient) -> None:
     assert client.starts[0]["text"] == "hello"
     assert len(client.starts[0]["idempotency_key"]) == 32
     assert model.active_run_id is None
+
+
+async def test_model_close_closes_credential_bearing_client(client: FakeClient) -> None:
+    model = HermesLLM(client=client, on_approval=AsyncMock())
+
+    await model.aclose()
+
+    assert client.closed
 
 
 async def test_empty_user_turn_and_livekit_tools_are_rejected(client: FakeClient) -> None:

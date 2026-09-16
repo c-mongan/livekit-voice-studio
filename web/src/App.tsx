@@ -26,16 +26,21 @@ function Icon({ name, className = '' }: { name: 'mic' | 'send' | 'stop' | 'close
 }
 
 function Pipeline({ status, online }: { status: StudioStatus | null; online: boolean }) {
-  const provider = { azure: 'Azure', openai: 'OpenAI', copilot: 'Copilot', codex: 'Codex' }[status?.ai.provider || 'azure'];
+  const provider = { hermes: 'Hermes', azure: 'Azure', openai: 'OpenAI', copilot: 'Copilot', codex: 'Codex' }[status?.ai.provider || 'azure'];
   const speechProvider = status?.stt ? { nemotron: 'Nemotron', azure: 'Azure Speech', openai: 'OpenAI' }[status.stt.provider] : 'Azure Speech';
   const mlx = status?.voice.backend === 'mlx';
   const streaming = mlx && status?.voice.streaming === true;
+  const hermes = status?.ai.provider === 'hermes';
+  const reasoningRoute = hermes ? `${status.ai.local ? 'Local' : 'Remote'} Hermes control plane` : 'Remote model';
+  const reasoningDescription = hermes
+    ? `Hermes uses a ${status.ai.local ? 'local' : 'remote'} control plane. Hermes controls model routing, tools, memory, and approvals.`
+    : `${provider} generates the response using a remote model.`;
   return <aside className="inspector" aria-label="Pipeline inspector">
     <div className="inspector-title"><h2>Your pipeline</h2><span className="local-label">Local agent</span></div>
     <p className="inspector-intro">Three stages. One conversation.</p>
     <ol className="pipeline">
       <li><span className="stage-number">1</span><div><h3>Listen</h3><p>{speechProvider}</p><span>Speech → text · {status?.stt?.local ? 'Local' : 'Cloud'}</span></div></li>
-      <li><span className="stage-number">2</span><div><h3>Reason</h3><p>{provider} · {status?.ai.model || 'Model not reported'}</p><span>Text → response · Remote model{status?.ai.effort && status.ai.effort !== 'none' ? ` · ${status.ai.effort} effort` : ''}</span></div></li>
+      <li><span className="stage-number">2</span><div><h3>Reason</h3><p>{provider} · {status?.ai.model || 'Model not reported'}</p><span>Text → response · {reasoningRoute}{status?.ai.effort && status.ai.effort !== 'none' ? ` · ${status.ai.effort} effort` : ''}</span></div></li>
       <li><span className="stage-number">3</span><div><h3>Speak</h3><p>{streaming ? 'Qwen · local streaming' : mlx ? 'Qwen · on this machine' : 'Voicebox · on this machine'}</p><span>Response → generated audio</span></div></li>
     </ol>
     <section className="inspector-section">
@@ -62,7 +67,7 @@ function Pipeline({ status, online }: { status: StudioStatus | null; online: boo
       <summary>How it works</summary>
       <div className="about-body">
         <p>LiveKit carries microphone audio, text, and replies between this browser and your local agent.</p>
-        <p>{speechProvider} transcribes speech {status?.stt?.local ? 'on this machine' : 'in the cloud'}. {provider} generates the response using a remote model. {streaming ? 'Qwen streams PCM audio locally. Voice conditioning is cached for reuse after it is prepared.' : mlx ? 'Qwen generates audio locally. The worker has not reported PCM streaming.' : 'Voicebox synthesizes complete WAV audio locally before playback is forwarded through LiveKit.'}</p>
+        <p>{speechProvider} transcribes speech {status?.stt?.local ? 'on this machine' : 'in the cloud'}. {reasoningDescription} {streaming ? 'Qwen streams PCM audio locally. Voice conditioning is cached for reuse after it is prepared.' : mlx ? 'Qwen generates audio locally. The worker has not reported PCM streaming.' : 'Voicebox synthesizes complete WAV audio locally before playback is forwarded through LiveKit.'}</p>
         <p>{streaming ? 'This streams generated audio, not text tokens. The agent still sends sentence-sized text for speech synthesis. The local model and selected voice normally prepare at session start, which can take several seconds.' : mlx ? 'The local model and selected voice normally prepare at session start. Readiness and timings here come from the local worker.' : 'This is not a realtime audio-generation model. A pause while a WAV is generated is expected.'}</p>
         <p>Typed messages skip speech recognition. Text history stays in this page’s memory. Conversation audio is not recorded here; voice enrollment saves only explicitly approved references to your local server.</p>
         {status?.voice.source === 'local-bundle' && <p>Your selected reference is read from a private local bundle. Voicebox can stay closed. The reference is not uploaded to LiveKit or the LLM.</p>}

@@ -212,6 +212,9 @@ async def test_scoped_tokens_and_one_session_at_a_time(broker, monkeypatch):
     assert not claims.video.room_admin
     assert claims.video.can_publish_sources == ["microphone"]
     assert data["sessionId"] not in data["participantToken"]
+    spawn = asyncio.create_subprocess_exec
+    assert isinstance(spawn, AsyncMock)
+    assert spawn.await_args.kwargs["env"]["HERMES_VOICE_SESSION_ID"] == data["sessionId"]
     assert "unit-secret" not in json.dumps(data)
     with pytest.raises(StudioError):
         await broker.create()
@@ -370,6 +373,48 @@ async def test_status_timeout_is_an_explicit_problem(broker, monkeypatch):
     state = await broker.status()
     assert not state["ready"]
     assert "Cannot verify" in state["problems"][0]
+
+
+@pytest.mark.parametrize(
+    ("base_url", "local"),
+    [
+        ("http://127.0.0.1:8642", True),
+        ("https://localhost:8642", True),
+        ("https://hermes.example", False),
+    ],
+)
+async def test_hermes_status_reports_control_plane_location(
+    broker, monkeypatch, base_url, local
+):
+    monkeypatch.setenv("VOICEBOX_LLM_PROVIDER", "hermes")
+    monkeypatch.setenv("HERMES_API_BASE_URL", base_url)
+    monkeypatch.setenv("HERMES_PROFILE", "voice-profile")
+    broker._last_status = {"voice": {"name": "Synthetic"}, "problems": []}
+    broker._last_status_at = module.time.monotonic()
+
+    state = await broker.status()
+
+    assert state["ai"] == {
+        "provider": "hermes",
+        "model": "profile-default",
+        "effort": "none",
+        "local": local,
+        "profile": "voice-profile",
+    }
+
+
+def test_hermes_is_first_reasoning_option_and_never_exposes_key(monkeypatch):
+    monkeypatch.setenv("HERMES_API_SERVER_KEY", "server-secret")
+
+    options = module.provider_options()
+
+    assert options["llm"][0] == {
+        "id": "hermes",
+        "label": "Hermes · tools, memory and approvals",
+        "available": True,
+        "reason": None,
+    }
+    assert "server-secret" not in json.dumps(options)
 
 
 @pytest.mark.parametrize("reason", ["heartbeat", "startup", "duration"])

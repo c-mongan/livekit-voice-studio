@@ -5,6 +5,7 @@ import { useVoiceAudition } from './useVoiceAudition';
 import { VoiceAudition } from './VoiceAudition';
 
 const presets: Record<string, { model: string; effort: string }> = {
+  hermes: { model: 'profile-default', effort: 'none' },
   copilot: { model: 'gpt-5.6-luna', effort: 'low' }, codex: { model: 'gpt-5.6-luna', effort: 'low' },
   azure: { model: 'gpt-4.1-nano', effort: '' }, openai: { model: 'gpt-4.1-mini', effort: '' },
 };
@@ -111,12 +112,17 @@ export function StudioSettings({ locked, onChanged, status, onAuditionBusy }: {
                 const provider = event.target.value; const preset = presets[provider];
                 if (preset) setConfig({ ...config, llmProvider: provider, llmModel: preset.model, reasoningEffort: preset.effort, codexRestrictedApproved: false });
               }}>{config.providers.llm.map((provider) => <option key={provider.id} value={provider.id} disabled={!provider.available || !presets[provider.id]}>{provider.label}{!provider.available ? ' - unavailable' : ''}</option>)}</select></label>
-              <div className="model-summary"><span>Remote model</span><strong>{config.llmModel}</strong>{config.reasoningEffort && config.reasoningEffort !== 'none' && <span>Reasoning effort: {config.reasoningEffort}</span>}</div>
-              <p className="route-note">Conversation text goes to this provider. Copilot and Codex use remote models, not local inference. Runtime availability is checked when connecting.</p>
+              <div className="model-summary"><span>{config.llmProvider === 'hermes' ? 'Hermes profile preset' : 'Remote model'}</span><strong>{config.llmModel}</strong>{config.reasoningEffort && config.reasoningEffort !== 'none' && <span>Reasoning effort: {config.reasoningEffort}</span>}</div>
+              {config.llmProvider === 'hermes' ? <>
+                <p className="route-note">Hermes keeps its tools, memory, model, and approval rules. Studio sends transcripts and receives streamed reply text.</p>
+                <label className="field">Hermes profile<input required maxLength={64} pattern="[A-Za-z0-9][A-Za-z0-9_-]{0,63}" value={config.hermesProfile} onChange={(event) => setConfig({ ...config, hermesProfile: event.target.value })} /></label>
+                <label className="field">Hermes base URL<input required type="url" value={config.hermesBaseUrl} onChange={(event) => setConfig({ ...config, hermesBaseUrl: event.target.value })} /></label>
+                <p className="field-help">Use loopback HTTP or an explicitly configured HTTPS Hermes server. The API key stays in the server environment.</p>
+              </> : <p className="route-note">Conversation text goes to this provider. Copilot and Codex use remote models, not local inference. Runtime availability is checked when connecting.</p>}
               {config.llmProvider === 'codex' && <label className="consent"><input type="checkbox" checked={config.codexRestrictedApproved === true} onChange={(event) => setConfig({ ...config, codexRestrictedApproved: event.target.checked })} /><span>I accept restricted Codex: commands are limited to a private workspace and minimal runtime files, command networking and external tools are disabled, and my global Codex instructions are trusted. This is not tool-free mode.</span></label>}
               {config.providers.llm.filter((provider) => !provider.available).map((provider) => <p className="field-help" key={provider.id}>{provider.label}: {provider.reason || 'Not available on this server.'}</p>)}
               <div className="local-synthesis"><strong>Speech synthesis stays local</strong><p>Your selected voice is used by Qwen on this machine. The reference recording is not sent to LiveKit or your reasoning provider.</p></div>
-              <button className="button primary" disabled={disabled || (config.llmProvider === 'codex' && !config.codexRestrictedApproved) || !config.providers.stt.find((p) => p.id === config.sttProvider)?.available || !config.providers.llm.find((p) => p.id === config.llmProvider)?.available} onClick={() => void mutate(() => api('settings', { sttProvider: config.sttProvider, llmProvider: config.llmProvider, llmModel: config.llmModel, reasoningEffort: config.reasoningEffort, codexRestrictedApproved: config.codexRestrictedApproved === true }), 'Settings saved for the next session.')}>{busy ? 'Saving...' : 'Save settings'}</button>
+              <button className="button primary" disabled={disabled || (config.llmProvider === 'codex' && !config.codexRestrictedApproved) || !config.providers.stt.find((p) => p.id === config.sttProvider)?.available || !config.providers.llm.find((p) => p.id === config.llmProvider)?.available} onClick={() => void mutate(() => api('settings', { sttProvider: config.sttProvider, llmProvider: config.llmProvider, llmModel: config.llmModel, reasoningEffort: config.reasoningEffort, hermesProfile: config.hermesProfile, hermesBaseUrl: config.hermesBaseUrl, codexRestrictedApproved: config.codexRestrictedApproved === true }), 'Settings saved for the next session.')}>{busy ? 'Saving...' : 'Save settings'}</button>
             </fieldset>
             <p className="privacy-footnote">LiveKit still transports conversation audio and text between this browser and the agent. Local speech recognition does not make the entire conversation local.</p>
           </section>}

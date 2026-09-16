@@ -154,6 +154,12 @@ class HermesLLM(llm.LLM[Never]):
             if owner is state:
                 self._pending_approvals.pop(request_id, None)
 
+    async def aclose(self) -> None:
+        try:
+            await super().aclose()
+        finally:
+            await self._client.aclose()
+
 
 class _HermesStream(llm.LLMStream):
     def __init__(

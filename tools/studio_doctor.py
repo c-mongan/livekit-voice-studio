@@ -49,6 +49,7 @@ BASE_PACKAGES = (
 MAX_JSON_BYTES = 1024 * 1024
 MAX_WAV_BYTES = 16 * 1024 * 1024
 PRESETS = {
+    "hermes": ("profile-default", "none"),
     "copilot": ("gpt-5.6-luna", "low"),
     "codex": ("gpt-5.6-luna", "low"),
     "azure": ("gpt-4.1-nano", "none"),
@@ -136,6 +137,8 @@ def _saved_environment(root: Path, env: dict[str, str]) -> bool:
         raise ValueError
     settings = _json(settings_path, 4096)
     settings.setdefault("codexRestrictedApproved", False)
+    settings.setdefault("hermesProfile", "default")
+    settings.setdefault("hermesBaseUrl", "http://127.0.0.1:8642")
     provider = settings.get("llmProvider")
     if (
         set(settings)
@@ -144,6 +147,8 @@ def _saved_environment(root: Path, env: dict[str, str]) -> bool:
             "llmProvider",
             "llmModel",
             "reasoningEffort",
+            "hermesProfile",
+            "hermesBaseUrl",
             "voiceId",
             "codexRestrictedApproved",
         }
@@ -151,6 +156,10 @@ def _saved_environment(root: Path, env: dict[str, str]) -> bool:
         or not isinstance(provider, str)
         or provider not in PRESETS
         or (settings["llmModel"], settings["reasoningEffort"]) != PRESETS[provider]
+        or not isinstance(settings["hermesProfile"], str)
+        or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", settings["hermesProfile"])
+        or not isinstance(settings["hermesBaseUrl"], str)
+        or not _hermes_origin(settings["hermesBaseUrl"])
         or type(settings["codexRestrictedApproved"]) is not bool
         or (provider == "codex" and not settings["codexRestrictedApproved"])
     ):
@@ -163,6 +172,8 @@ def _saved_environment(root: Path, env: dict[str, str]) -> bool:
         VOICEBOX_LLM_PROVIDER=settings["llmProvider"],
         VOICEBOX_LLM_MODEL=settings["llmModel"],
         VOICEBOX_REASONING_EFFORT=settings["reasoningEffort"],
+        HERMES_PROFILE=settings["hermesProfile"],
+        HERMES_API_BASE_URL=settings["hermesBaseUrl"],
         VOICEBOX_CODEX_RESTRICTED="1" if settings["codexRestrictedApproved"] else "0",
     )
     if voice is not None:
@@ -227,6 +238,24 @@ def _url(value: str, schemes: tuple[str, ...]) -> bool:
             and not url.query
             and not url.fragment
             and (url.port is None or 0 < url.port <= 65535)
+        )
+    except ValueError:
+        return False
+
+
+def _hermes_origin(value: str) -> bool:
+    try:
+        url = urlsplit(value)
+        _ = url.port
+        return bool(
+            url.scheme in {"http", "https"}
+            and url.hostname
+            and not url.username
+            and not url.password
+            and not url.query
+            and not url.fragment
+            and not url.path.rstrip("/")
+            and (url.scheme == "https" or url.hostname in {"127.0.0.1", "localhost", "::1"})
         )
     except ValueError:
         return False
@@ -468,7 +497,19 @@ def run_checks(root: Path, environ: Mapping[str, str] | None = None) -> Report:
         )
         reasoning_ok = False
         reasoning_action = "Choose a supported reasoning provider in Studio Settings."
-        if reasoning in ("copilot", "codex"):
+        if reasoning == "hermes":
+            profile = env.get("HERMES_PROFILE", "default")
+            base_url = env.get("HERMES_API_BASE_URL", "http://127.0.0.1:8642")
+            reasoning_ok = bool(
+                populated("HERMES_API_SERVER_KEY")
+                and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", profile)
+                and _hermes_origin(base_url)
+            )
+            reasoning_action = (
+                "Set HERMES_API_SERVER_KEY on the Studio server and configure a valid Hermes "
+                "profile with loopback HTTP or HTTPS."
+            )
+        elif reasoning in ("copilot", "codex"):
             model = env.get("VOICEBOX_LLM_MODEL", "gpt-5.6-luna").strip()
             effort = env.get("VOICEBOX_REASONING_EFFORT", "low").strip()
             reasoning_ok = cli(reasoning) and bool(model and model != "auto" and effort)

@@ -12,9 +12,10 @@ let locked = false;
 const changed = vi.fn();
 const settings = {
   sttProvider: 'nemotron', llmProvider: 'copilot', llmModel: 'gpt-5.6-luna', reasoningEffort: 'low', voiceId: 'one',
+  hermesProfile: 'default', hermesBaseUrl: 'http://127.0.0.1:8642',
   providers: {
     stt: [{ id: 'nemotron', label: 'Nemotron', available: true }, { id: 'azure', label: 'Azure', available: false, reason: 'Not configured' }],
-    llm: [{ id: 'copilot', label: 'Copilot', available: true }, { id: 'codex', label: 'Codex', available: true }],
+    llm: [{ id: 'hermes', label: 'Hermes', available: true }, { id: 'copilot', label: 'Copilot', available: true }, { id: 'codex', label: 'Codex', available: true }],
   },
 };
 const fetchMock = vi.fn();
@@ -188,9 +189,36 @@ it('saves only allowed configuration fields with a CSRF header', async () => {
   await click('Save settings');
   const call = fetchMock.mock.calls.find(([, init]) => init.method === 'POST')!;
   expect(call[0]).toBe('/api/settings');
-  expect(JSON.parse(call[1].body)).toEqual({ sttProvider: 'nemotron', llmProvider: 'copilot', llmModel: 'gpt-5.6-luna', reasoningEffort: 'low', codexRestrictedApproved: false });
+  expect(JSON.parse(call[1].body)).toEqual({ sttProvider: 'nemotron', llmProvider: 'copilot', llmModel: 'gpt-5.6-luna', reasoningEffort: 'low', hermesProfile: 'default', hermesBaseUrl: 'http://127.0.0.1:8642', codexRestrictedApproved: false });
   expect(call[1].headers['X-Voicebox-Studio']).toBe('1');
   expect(changed).toHaveBeenCalled();
+});
+it('configures Hermes first without exposing a credential field', async () => {
+  await click('Settings');
+  const select = host.querySelectorAll('select')[1];
+  expect(select.options[0].value).toBe('hermes');
+  await act(async () => { select.value = 'hermes'; select.dispatchEvent(new Event('change', { bubbles: true })); });
+  expect(host.textContent).toContain('Hermes keeps its tools, memory, model, and approval rules. Studio sends transcripts and receives streamed reply text.');
+  const inputs = [...host.querySelectorAll<HTMLInputElement>('input')];
+  const profile = inputs.find((input) => input.closest('label')?.textContent?.includes('Hermes profile'))!;
+  const baseUrl = inputs.find((input) => input.closest('label')?.textContent?.includes('Hermes base URL'))!;
+  expect(profile.value).toBe('default');
+  expect(baseUrl.value).toBe('http://127.0.0.1:8642');
+  expect(inputs.some((input) => input.type === 'password')).toBe(false);
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(profile, 'voice-profile');
+    profile.dispatchEvent(new Event('input', { bubbles: true }));
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(baseUrl, 'https://hermes.example');
+    baseUrl.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await click('Save settings');
+  const call = fetchMock.mock.calls.find(([, init]) => init.method === 'POST')!;
+  expect(JSON.parse(call[1].body)).toEqual({
+    sttProvider: 'nemotron', llmProvider: 'hermes', llmModel: 'profile-default', reasoningEffort: 'none',
+    hermesProfile: 'voice-profile', hermesBaseUrl: 'https://hermes.example', codexRestrictedApproved: false,
+  });
+  expect(call[1].body).not.toContain('apiKey');
+  expect(call[1].body).not.toContain('server-secret');
 });
 it('requires explicit restricted Codex consent and resets it when the provider changes', async () => {
   await click('Settings');

@@ -446,6 +446,20 @@ describe('truthful transcript and accessible visual state', () => {
     expect(host.textContent).not.toContain('Qwen · local streaming');
   });
 
+  it('labels Hermes locality as control-plane location rather than local reasoning', async () => {
+    mocks.studio.status.ai = {
+      provider: 'hermes', model: 'profile-default', effort: 'none', local: true, profile: 'default',
+    };
+
+    await mount();
+
+    const reasoning = host.querySelectorAll('.pipeline li')[1];
+    expect(reasoning.textContent).toContain('Hermes · profile-default');
+    expect(reasoning.textContent).toContain('Local Hermes control plane');
+    expect(reasoning.textContent).not.toContain('Local model');
+    expect(host.querySelector('.about-body')?.textContent).toContain('Hermes controls model routing');
+  });
+
   it('describes reported MLX PCM streaming without claiming a cold worker is loaded', async () => {
     mocks.studio.status.voice = { ...readyStatus.voice, backend: 'mlx', streaming: true, loaded: false };
     await mount();

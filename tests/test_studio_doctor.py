@@ -175,6 +175,8 @@ def saved_settings(root, env, **updates):
         "llmProvider": "openai",
         "llmModel": "gpt-4.1-mini",
         "reasoningEffort": "none",
+        "hermesProfile": "default",
+        "hermesBaseUrl": "http://127.0.0.1:8642",
         "voiceId": None,
         "codexRestrictedApproved": False,
     }
@@ -194,6 +196,52 @@ def test_saved_provider_settings_override_process_and_dotenv(configured):
     found = checks(doctor.run_checks(root, env))
     assert found["reasoning"]["status"] == "missing"
     assert found["speech"]["status"] == "missing"
+
+
+def test_saved_hermes_settings_validate_and_supply_nonsecret_environment(configured):
+    root, env = configured
+    saved_settings(
+        root,
+        env,
+        llmProvider="hermes",
+        llmModel="profile-default",
+        reasoningEffort="none",
+        hermesProfile="voice-profile",
+        hermesBaseUrl="https://hermes.example",
+    )
+    env["HERMES_API_SERVER_KEY"] = "private"
+
+    found = checks(doctor.run_checks(root, env))
+
+    assert found["settings"]["status"] == "pass"
+    assert found["reasoning"]["status"] == "pass"
+
+
+@pytest.mark.parametrize(
+    ("updates", "secret"),
+    [
+        ({"hermesProfile": "../private"}, ""),
+        ({"hermesBaseUrl": "http://hermes.example"}, ""),
+        ({"hermesBaseUrl": "https://user:secret@hermes.example"}, "secret"),
+    ],
+)
+def test_saved_hermes_settings_reject_invalid_profile_or_origin(configured, updates, secret):
+    root, env = configured
+    saved_settings(
+        root,
+        env,
+        llmProvider="hermes",
+        llmModel="profile-default",
+        reasoningEffort="none",
+        **updates,
+    )
+    env["HERMES_API_SERVER_KEY"] = "private"
+
+    report = doctor.run_checks(root, env)
+
+    assert checks(report)["settings"]["status"] == "missing"
+    if secret:
+        assert secret not in json.dumps(report)
 
 
 @pytest.mark.parametrize("value", ["{", "[]", '{"private":"SECRET"}', "x" * 4097])

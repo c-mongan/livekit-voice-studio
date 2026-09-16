@@ -13,7 +13,7 @@ export interface StudioStatus {
     source?: 'voicebox' | 'local-bundle';
   };
   stt?: { provider: 'nemotron' | 'azure' | 'openai'; model: string; local: boolean };
-  ai: { provider: 'azure' | 'openai' | 'copilot' | 'codex'; model: string; effort?: string; local?: false };
+  ai: { provider: 'hermes' | 'azure' | 'openai' | 'copilot' | 'codex'; model: string; effort?: string; local?: boolean; profile?: string };
   livekit: { configured: boolean };
   session: { id: string; roomName: string } | null;
   metrics: {
@@ -57,6 +57,8 @@ export interface StudioConfig {
   llmProvider: string;
   llmModel: string;
   reasoningEffort: string;
+  hermesProfile: string;
+  hermesBaseUrl: string;
   codexRestrictedApproved?: boolean;
   voiceId: string | null;
   providers: { stt: ProviderOption[]; llm: ProviderOption[] };

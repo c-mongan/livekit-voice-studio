@@ -6,6 +6,7 @@ import logging
 import os
 import shutil
 import sys
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Never
 
@@ -13,6 +14,9 @@ from dotenv import load_dotenv
 from livekit.agents import Agent, AgentServer, AgentSession, JobContext, JobRequest, cli, llm, stt
 from livekit.plugins import openai, silero, voicebox
 from livekit.plugins.voicebox.errors import VoiceboxError
+
+from examples.hermes_api import HermesAPIError, HermesConfig, HermesRunsClient
+from examples.hermes_llm import ApprovalRequest, HermesLLM
 
 server = AgentServer(host="127.0.0.1")
 logger = logging.getLogger("voicebox.example")
@@ -70,14 +74,42 @@ async def azure_resource_key(account: str) -> str:
     return stdout.decode().strip()
 
 
-async def configured_ai() -> tuple[stt.STT[Never], llm.LLM[Never]]:
+async def _unwired_approval(_request: ApprovalRequest) -> None:
+    raise RuntimeError("Hermes approval handling is not connected; the request was not approved.")
+
+
+def hermes_config(*, session_id: str) -> HermesConfig:
+    return HermesConfig(
+        base_url=os.environ.get("HERMES_API_BASE_URL", "http://127.0.0.1:8642"),
+        api_key=os.environ.get("HERMES_API_SERVER_KEY", ""),
+        profile=os.environ.get("HERMES_PROFILE", "default"),
+        session_id=session_id,
+    )
+
+
+async def configured_ai(
+    *, on_approval: Callable[[ApprovalRequest], Awaitable[None]] | None = None
+) -> tuple[stt.STT[Never], llm.LLM[Never]]:
     speech_choice, reasoning_choice = provider_choices()
     if speech_choice not in ("azure", "openai", "nemotron"):
         raise RuntimeError("Unsupported speech recognition provider.")
-    if reasoning_choice not in ("azure", "openai", "copilot", "codex"):
+    if reasoning_choice not in ("hermes", "azure", "openai", "copilot", "codex"):
         raise RuntimeError("Unsupported reasoning provider.")
     language_model: llm.LLM[Never]
-    if reasoning_choice == "azure":
+    if reasoning_choice == "hermes":
+        client = HermesRunsClient(
+            hermes_config(session_id=os.environ.get("HERMES_VOICE_SESSION_ID", ""))
+        )
+        try:
+            await client.preflight()
+            language_model = HermesLLM(
+                client=client,
+                on_approval=on_approval or _unwired_approval,
+            )
+        except BaseException:
+            await client.aclose()
+            raise
+    elif reasoning_choice == "azure":
         llm_key = await azure_resource_key(os.environ["AZURE_OPENAI_ACCOUNT"])
         language_model = openai.LLM.with_azure(
             model=os.environ.get("AZURE_OPENAI_MODEL", "gpt-4.1-nano"),
@@ -162,13 +194,37 @@ async def check_setup(*, require_loaded: bool = True, local_voice: bool = False)
             problems.append("Install Azure CLI and sign in with az login.")
         if importlib.util.find_spec("livekit.plugins.azure") is None:
             problems.append("Install the azure extra before running the Azure-backed example.")
-    if choice in ("copilot", "codex"):
+    if choice == "hermes":
+        api_key = os.environ.get("HERMES_API_SERVER_KEY", "")
+        if not api_key.strip():
+            problems.append(
+                "Set HERMES_API_SERVER_KEY in the workspace .env or process environment."
+            )
+        try:
+            config = HermesConfig(
+                base_url=os.environ.get("HERMES_API_BASE_URL", "http://127.0.0.1:8642"),
+                api_key=api_key or "readiness-validation",
+                profile=os.environ.get("HERMES_PROFILE", "default"),
+                session_id="studio-readiness",
+            )
+        except ValueError as error:
+            problems.append(str(error))
+        else:
+            if api_key.strip():
+                client = HermesRunsClient(config)
+                try:
+                    await client.preflight()
+                except (HermesAPIError, ValueError) as error:
+                    problems.append(str(error))
+                finally:
+                    await client.aclose()
+    elif choice in ("copilot", "codex"):
         if not shutil.which(choice):
             problems.append(f"Install and sign in to the selected {choice} CLI.")
         if choice == "codex" and os.environ.get("VOICEBOX_CODEX_RESTRICTED") != "1":
             problems.append("Confirm restricted Codex mode in Studio settings before connecting.")
     elif choice not in ("openai", "azure"):
-        problems.append("Choose Azure, OpenAI, Copilot or Codex for reasoning.")
+        problems.append("Choose Hermes, Azure, OpenAI, Copilot or Codex for reasoning.")
     if speech_choice == "nemotron":
         binary = os.environ.get("NEMOTRON_SERVER_BINARY", "")
         model_path = os.environ.get("NEMOTRON_MODEL_PATH", "")
