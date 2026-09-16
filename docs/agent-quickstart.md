@@ -101,8 +101,9 @@ The Hermes vertical-slice test is intentionally skipped unless
 path, authorized voice bundle, and synthetic audio fixture is supplied explicitly.
 Do not enable or run it without separate authorization for real LiveKit and Hermes
 usage. When authorized, run only the named test and retain its sanitized JSON
-stdout; it covers one room, a harmless fixture read, click denial, interruption,
-continuity, timing gates, and ownership drain:
+stdout; it covers one room, a harmless fixture read, denial through the session
+owner-only approval RPC, non-final assistant transcription as direct streaming
+evidence, interruption, continuity, timing gates, and ownership drain:
 
 ```sh
 uv run pytest tests/integration/test_hermes_studio_live.py -m integration -v -s

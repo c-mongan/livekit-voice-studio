@@ -57,3 +57,37 @@ Therefore these live claims are **not passed**: real Hermes tool execution and d
 ## Self-review
 
 No hardcoded credential or destructive command was added. The only approval fixture targets a pytest-owned temporary path and is asserted absent after denial. The harness cannot run from a copied example configuration because it requires explicit non-empty credentials and existing asset paths. Independent subagent review was not performed because the binding task ruling prohibited dispatching subagents.
+
+## Fix round 1 — live observability and documentation accuracy
+
+### Status
+
+Resolved all four review findings without starting live services, contacting LiveKit or Hermes, or loading model/voice assets. The live gate remains deliberately opt-in and unexecuted pending separate authorization and complete credentials/assets.
+
+### Changes
+
+- Replaced tuple-based transcript tracking with timestamped, sequence-bounded observation bookkeeping for assistant transcriptions and non-zero audio frames.
+- The interruption probe now records its run start, proves a non-final `RETIRE-ME` transcript and audible output before Stop, captures the retirement boundary immediately before the interrupt RPC, inspects all post-boundary events, rejects retired marker text, and rejects audio beyond the 200 ms silence gate before starting the continuity turn.
+- `send_and_wait` now requires a non-empty, non-final assistant transcription event from the current turn in addition to the expected reply text. This is the direct LiveKit streaming signal used by the harness; a final-only transcript no longer passes.
+- `voicebox.interrupt` now returns `hermesTerminalAcknowledged` from the actual `HermesLLM.stop_run()` boolean. Concurrent duplicate interrupts share the same stop task and therefore report the same observed result. `actionUndone` remains independently and explicitly false.
+- The live test asserts `hermesTerminalAcknowledged is True` and emits that observed value in its JSON report instead of a literal success value.
+- Corrected `docs/agent-quickstart.md`: the harness denial is performed through the session owner-only approval RPC, not by a browser click. The document also names non-final assistant transcription as the streaming evidence.
+- Added deterministic helper tests covering final-only rejection, pre-stop marker/activity provenance, late retired text rejection, post-stop audio timing, and accepted bounded audio drain.
+
+### Verification
+
+- `uv run pytest tests/test_hermes_live_evidence.py tests/test_studio_worker.py tests/test_hermes_llm.py -q` — **46 passed**.
+- `uv run pytest -m "not integration"` — **556 passed, 6 deselected**.
+- `uv run ruff check .` — **passed**.
+- `uv run mypy` — **passed; 25 source files checked**.
+- `npm --prefix web test` — **179 passed across 13 files**.
+- `npm --prefix web run build` — **passed**; Vite retained the existing 776.92 kB chunk-size advisory.
+- `npm --prefix web audit --audit-level=high` — **0 vulnerabilities**.
+- `uv run python -m py_compile examples/studio_worker.py tests/integration/test_hermes_studio_live.py tests/test_hermes_live_evidence.py tests/test_studio_worker.py` — **passed**.
+- `git diff --check` — **passed**.
+- Safe-skip check with `HERMES_STUDIO_LIVE` absent — **1 skipped** with the explicit authorization reason.
+- Safe-skip check with `HERMES_STUDIO_LIVE=1` and blank `LIVEKIT_URL` — **1 skipped** with the complete missing-prerequisite list.
+
+### Remaining gate
+
+The authorized live command was not run. Real service behavior—including whether the configured LiveKit version emits the required non-final assistant transcription, Hermes returns terminal acknowledgement within its stop timeout, and the measured Qwen/Nemotron timing gates pass—remains unverified until the separately authorized live test is executed.

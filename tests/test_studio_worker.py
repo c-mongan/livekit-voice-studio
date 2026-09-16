@@ -90,7 +90,10 @@ async def test_approval_rpc_requires_owner_and_exact_identifiers() -> None:
 
 
 @pytest.mark.parametrize("drain_succeeds", [True, False])
-async def test_rpc_registration_follows_connection_and_shutdown_drains(monkeypatch, drain_succeeds):
+@pytest.mark.parametrize("terminal_acknowledged", [True, False])
+async def test_rpc_registration_follows_connection_and_shutdown_drains(
+    monkeypatch, drain_succeeds, terminal_acknowledged
+):
     reports = []
     order = []
     handlers = {}
@@ -189,6 +192,7 @@ async def test_rpc_registration_follows_connection_and_shutdown_drains(monkeypat
         assert result == repeated == {
             "stoppedPlayback": True,
             "hermesStopRequested": True,
+            "hermesTerminalAcknowledged": terminal_acknowledged,
             "actionUndone": False,
             "backendState": "ready",
         }
@@ -210,7 +214,7 @@ async def test_rpc_registration_follows_connection_and_shutdown_drains(monkeypat
     async def stop_exact(run):
         exact_stops.append(run.run_id)
         order.append(f"hermes-stop:{run.run_id}")
-        return False
+        return terminal_acknowledged
 
     interrupt_calls = 0
 
@@ -289,6 +293,10 @@ async def test_rpc_registration_follows_connection_and_shutdown_drains(monkeypat
     assert order.index("playback-stopped") < order.index("hermes-stop:run-1")
     assert order.index("provider-drained") < order.index("disconnect")
     assert reports[-1] == ("finished", {"safe": drain_succeeds})
+    assert not any(
+        event == "error" and data["message"].startswith("Failed during conversation startup")
+        for event, data in reports
+    )
     assert session.interrupt.await_count == 3
     session.interrupt.assert_awaited_with(force=True)
     assert exact_stops == ["run-1"]

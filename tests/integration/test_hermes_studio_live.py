@@ -13,6 +13,7 @@ import json
 import math
 import os
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -48,6 +49,107 @@ _REQUIRED_FILES = (
     "HERMES_STUDIO_TEST_AUDIO",
 )
 _REQUIRED_DIRECTORIES = ("VOICEBOX_MLX_MODEL_PATH", "VOICEBOX_VOICE_BUNDLE")
+
+
+@dataclass(frozen=True)
+class _ObservedTranscription:
+    observed_at: float
+    participant_identity: str
+    text: str
+    final: bool
+
+
+@dataclass(frozen=True)
+class _ObservationBoundary:
+    observed_at: float
+    transcript_count: int
+    audio_count: int
+
+
+@dataclass
+class _ObservationLog:
+    transcriptions: list[_ObservedTranscription] = field(default_factory=list)
+    nonzero_audio_at: list[float] = field(default_factory=list)
+
+    @property
+    def transcript_count(self) -> int:
+        return len(self.transcriptions)
+
+    def record_transcription(
+        self, observed_at: float, participant_identity: str, text: str, *, final: bool
+    ) -> None:
+        self.transcriptions.append(
+            _ObservedTranscription(observed_at, participant_identity, text, final)
+        )
+
+    def record_nonzero_audio(self, observed_at: float) -> None:
+        self.nonzero_audio_at.append(observed_at)
+
+    def boundary(self, observed_at: float) -> _ObservationBoundary:
+        return _ObservationBoundary(
+            observed_at,
+            transcript_count=len(self.transcriptions),
+            audio_count=len(self.nonzero_audio_at),
+        )
+
+
+def _assistant_text(observations: _ObservationLog, since: int, identity: str) -> str:
+    return "".join(
+        event.text
+        for event in observations.transcriptions[since:]
+        if event.participant_identity == identity
+    )
+
+
+def _streamed_assistant_text_observed(
+    observations: _ObservationLog, since: int, identity: str, expected: str
+) -> bool:
+    events = [
+        event
+        for event in observations.transcriptions[since:]
+        if event.participant_identity == identity
+    ]
+    return expected.casefold() in "".join(event.text for event in events).casefold() and any(
+        event.text and not event.final for event in events
+    )
+
+
+def _assert_interruption_evidence(
+    observations: _ObservationLog,
+    retired_start: _ObservationBoundary,
+    boundary: _ObservationBoundary,
+    *,
+    agent_identity: str,
+    marker: str,
+    silence_limit_seconds: float,
+) -> float:
+    before = observations.transcriptions[
+        retired_start.transcript_count : boundary.transcript_count
+    ]
+    assert any(
+        event.participant_identity == agent_identity
+        and marker.casefold() in event.text.casefold()
+        for event in before
+    ), "The retired-run marker was not observed before interruption."
+    assert boundary.audio_count > retired_start.audio_count, (
+        "No retired-run audio was observed before interruption."
+    )
+
+    after = observations.transcriptions[boundary.transcript_count :]
+    assert not any(
+        event.participant_identity == agent_identity
+        and marker.casefold() in event.text.casefold()
+        for event in after
+    ), "Observed retired Hermes text after the stop boundary."
+
+    post_stop_audio = observations.nonzero_audio_at[boundary.audio_count :]
+    stop_to_silence = (
+        max(0.0, max(post_stop_audio) - boundary.observed_at) if post_stop_audio else 0.0
+    )
+    assert stop_to_silence <= silence_limit_seconds, (
+        "Observed retired reply audio after the stop-to-silence gate."
+    )
+    return stop_to_silence
 
 
 def _live_skip_reason() -> str | None:
@@ -145,7 +247,7 @@ async def test_continuous_hermes_room_tools_approval_interrupt_continuity_and_dr
     agent_identity = ""
     owner_identity = ""
     audio_tasks: list[asyncio.Task[None]] = []
-    transcriptions: list[tuple[float, str, str, bool]] = []
+    observations = _ObservationLog()
     approvals: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
     resolutions: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
     nonzero_audio = asyncio.Event()
@@ -159,6 +261,7 @@ async def test_continuous_hermes_room_tools_approval_interrupt_continuity_and_dr
             async for event in stream:
                 if any(abs(sample) > 100 for sample in event.frame.data):
                     last_nonzero_audio = time.perf_counter()
+                    observations.record_nonzero_audio(last_nonzero_audio)
                     nonzero_audio.set()
         finally:
             await stream.aclose()
@@ -176,8 +279,11 @@ async def test_continuous_hermes_room_tools_approval_interrupt_continuity_and_dr
     def transcription_received(transcription: rtc.Transcription) -> None:
         now = time.perf_counter()
         for segment in transcription.segments:
-            transcriptions.append(
-                (now, transcription.participant_identity, segment.text, segment.final)
+            observations.record_transcription(
+                now,
+                transcription.participant_identity,
+                segment.text,
+                final=segment.final,
             )
 
     @room.on("data_received")
@@ -197,20 +303,20 @@ async def test_continuous_hermes_room_tools_approval_interrupt_continuity_and_dr
             queue.put_nowait(payload)
 
     def assistant_text(since: int = 0) -> str:
-        return "".join(
-            text
-            for _, participant, text, _final in transcriptions[since:]
-            if participant == agent_identity
-        )
+        return _assistant_text(observations, since, agent_identity)
 
     async def send_and_wait(prompt: str, expected: str, *, seconds: float = 60) -> float:
-        start_index = len(transcriptions)
+        start_index = observations.transcript_count
         started = time.perf_counter()
         await room.local_participant.send_text(prompt, topic="lk.chat")
         await _wait_until(
-            lambda: expected.casefold() in assistant_text(start_index).casefold(),
+            lambda: _streamed_assistant_text_observed(
+                observations, start_index, agent_identity, expected
+            ),
             seconds=seconds,
-            message=f"Assistant speech text did not contain {expected!r}.",
+            message=(
+                f"Assistant speech text did not stream a non-final segment containing {expected!r}."
+            ),
         )
         return started
 
@@ -295,7 +401,7 @@ async def test_continuous_hermes_room_tools_approval_interrupt_continuity_and_dr
         await room.local_participant.publish_track(
             track, rtc.TrackPublishOptions(source=rtc.TrackSource.SOURCE_MICROPHONE)
         )
-        spoken_start = len(transcriptions)
+        spoken_start = observations.transcript_count
         for offset in range(0, len(synthetic_pcm), 640):
             block = synthetic_pcm[offset : offset + 640]
             await source.capture_frame(rtc.AudioFrame(block, sample_rate, 1, len(block) // 2))
@@ -304,9 +410,9 @@ async def test_continuous_hermes_room_tools_approval_interrupt_continuity_and_dr
         await _wait_until(
             lambda: os.environ["HERMES_STUDIO_AUDIO_EXPECT"].casefold()
             in "".join(
-                text
-                for _, participant, text, final in transcriptions[spoken_start:]
-                if participant == owner_identity and final
+                event.text
+                for event in observations.transcriptions[spoken_start:]
+                if event.participant_identity == owner_identity and event.final
             ).casefold(),
             seconds=30,
             message="Nemotron final transcript did not contain the expected synthetic phrase.",
@@ -340,14 +446,21 @@ async def test_continuous_hermes_room_tools_approval_interrupt_continuity_and_dr
             message="Previous reply audio did not become quiet before interruption probe.",
         )
         nonzero_audio.clear()
-        before_long = len(transcriptions)
+        retired_start = observations.boundary(time.perf_counter())
+        before_long = observations.transcript_count
         await room.local_participant.send_text(
             "Give a long response containing the token RETIRE-ME in every sentence.",
             topic="lk.chat",
         )
-        async with asyncio.timeout(45):
-            await nonzero_audio.wait()
-        stop_started = time.perf_counter()
+        await _wait_until(
+            lambda: nonzero_audio.is_set()
+            and _streamed_assistant_text_observed(
+                observations, before_long, agent_identity, "RETIRE-ME"
+            ),
+            seconds=45,
+            message="The long reply did not stream RETIRE-ME with audible output before Stop.",
+        )
+        stop_boundary = observations.boundary(time.perf_counter())
         interrupt = json.loads(
             await room.local_participant.perform_rpc(
                 destination_identity=details["agentIdentity"],
@@ -357,21 +470,25 @@ async def test_continuous_hermes_room_tools_approval_interrupt_continuity_and_dr
         )
         assert interrupt["stoppedPlayback"] is True
         assert interrupt["hermesStopRequested"] is True
+        assert interrupt["hermesTerminalAcknowledged"] is True
         assert interrupt["actionUndone"] is False
         await asyncio.sleep(0.25)
-        stop_to_silence = max(0.0, last_nonzero_audio - stop_started)
-        assert stop_to_silence <= 0.200
-        retired_boundary = len(transcriptions)
+        stop_to_silence = _assert_interruption_evidence(
+            observations,
+            retired_start,
+            stop_boundary,
+            agent_identity=agent_identity,
+            marker="RETIRE-ME",
+            silence_limit_seconds=0.2,
+        )
 
-        # Same Hermes session must retain memory, and retired deltas must not cross this turn.
+        # Same Hermes session must retain memory after retired output has been ruled out.
+        continuity_start = observations.transcript_count
         await send_and_wait(
             "What word did I ask you to remember? Reply only with that word.", memory_word
         )
         await wait_listening()
-        post_retirement = assistant_text(retired_boundary)
-        assert memory_word.casefold() in post_retirement.casefold()
-        assert "RETIRE-ME" not in post_retirement
-        assert len(transcriptions) > before_long
+        assert memory_word.casefold() in assistant_text(continuity_start).casefold()
 
         assert studio.metrics["llmFirstTokenSeconds"] is not None
         assert studio.metrics["ttsFirstFrameSeconds"] is not None
@@ -380,7 +497,7 @@ async def test_continuous_hermes_room_tools_approval_interrupt_continuity_and_dr
                 "approval_denied": True,
                 "continuity_verified": True,
                 "end_of_utterance_seconds": studio.metrics["endOfUtteranceSeconds"],
-                "hermes_terminal_after_stop": True,
+                "hermes_terminal_after_stop": interrupt["hermesTerminalAcknowledged"],
                 "llm_first_text_delta_seconds": studio.metrics["llmFirstTokenSeconds"],
                 "measured_qwen_turns": len(warm_ttfb),
                 "nemotron_final_transcription_seconds": studio.metrics[

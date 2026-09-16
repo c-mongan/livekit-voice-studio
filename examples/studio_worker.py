@@ -146,6 +146,7 @@ async def run() -> None:
     stage = report_startup("voice provider configuration")
     owner = os.environ["STUDIO_PARTICIPANT_IDENTITY"]
     interrupted_run_id: str | None = None
+    interrupted_stop_task: asyncio.Task[bool] | None = None
     interrupt_lock = asyncio.Lock()
 
     async def watch_parent() -> None:
@@ -290,7 +291,7 @@ async def run() -> None:
                     speech.commit_utterance()
 
         async def interrupt(data: rtc.RpcInvocationData) -> str:
-            nonlocal interrupted_run_id
+            nonlocal interrupted_run_id, interrupted_stop_task
             if data.caller_identity != owner:
                 raise rtc.RpcError(1403, "Only the session owner can stop this reply.")
             if session is None or provider is None:
@@ -303,16 +304,21 @@ async def run() -> None:
                 async with interrupt_lock:
                     if interrupted_run_id != hermes_run.run_id:
                         interrupted_run_id = hermes_run.run_id
-                        hermes_stop = asyncio.create_task(hermes_model.stop_run(hermes_run))
+                        interrupted_stop_task = asyncio.create_task(
+                            hermes_model.stop_run(hermes_run)
+                        )
+                    hermes_stop = interrupted_stop_task
+            terminal_acknowledged = False
             try:
                 await playback_stop
             finally:
                 if hermes_stop is not None:
-                    await hermes_stop
+                    terminal_acknowledged = await hermes_stop
             return json.dumps(
                 {
                     "stoppedPlayback": True,
                     "hermesStopRequested": hermes_run is not None,
+                    "hermesTerminalAcknowledged": terminal_acknowledged,
                     "actionUndone": False,
                     "backendState": provider.backend_state,
                 }
