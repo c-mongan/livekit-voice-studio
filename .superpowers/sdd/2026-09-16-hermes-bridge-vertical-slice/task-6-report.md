@@ -91,3 +91,33 @@ Resolved all four review findings without starting live services, contacting Liv
 ### Remaining gate
 
 The authorized live command was not run. Real service behavior—including whether the configured LiveKit version emits the required non-final assistant transcription, Hermes returns terminal acknowledgement within its stop timeout, and the measured Qwen/Nemotron timing gates pass—remains unverified until the separately authorized live test is executed.
+
+## Fix round 2 — non-final proof and continuity-wide stale monitoring
+
+### Status
+
+Resolved the three remaining deterministic evidence gaps without changing the terminal-status fix or public documentation wording. No live external service, local model, or voice asset was started or contacted.
+
+### Changes
+
+- `_streamed_assistant_text_observed()` now searches only accumulated non-final assistant transcription chunks for the expected text. A final `READY` plus an unrelated non-final `REA` is rejected; genuine non-final `REA` + `DY` accumulation is accepted.
+- `_assert_interruption_evidence()` now requires the pre-stop `RETIRE-ME` marker itself to occur in a non-final assistant transcription event.
+- The stop boundary remains captured immediately before the interrupt RPC. The silence observation window is bounded at continuity initiation so continuity audio is excluded from the retired-audio calculation, while stale assistant transcript inspection is deferred until continuity completes and covers every event after the stop boundary.
+- Added deterministic regressions for final-only expected text, genuine incremental text, final-only pre-stop marker evidence, continuity audio separation, and a retired marker arriving during continuity.
+
+### Verification
+
+- `uv run pytest tests/test_hermes_live_evidence.py tests/test_studio_worker.py tests/test_hermes_llm.py -q` — **50 passed**.
+- `uv run pytest -m "not integration"` — **560 passed, 6 deselected**.
+- `uv run ruff check .` — **passed**.
+- `uv run mypy` — **passed; 25 source files checked**.
+- `npm --prefix web test` — **179 passed across 13 files**.
+- `npm --prefix web run build` — **passed**; Vite retained the existing 776.92 kB chunk-size advisory.
+- `npm --prefix web audit --audit-level=high` — **0 vulnerabilities**.
+- `uv run python -m py_compile tests/integration/test_hermes_studio_live.py tests/test_hermes_live_evidence.py` — **passed**.
+- Both safe-skip checks passed: absent opt-in skipped with the authorization reason; explicit opt-in with blank `LIVEKIT_URL` skipped with the missing-prerequisite list.
+- `git diff --check` — **passed**.
+
+### Remaining gate
+
+The authorized live command remains deliberately unexecuted. Real LiveKit/Hermes continuity, stale-output behavior, and latency gates remain release-blocking until separately authorized with complete credentials and assets.

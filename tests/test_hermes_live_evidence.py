@@ -9,15 +9,40 @@ from tests.integration.test_hermes_studio_live import (
 )
 
 
-def test_streamed_text_requires_non_final_assistant_transcription() -> None:
+def test_streamed_text_rejects_expected_text_from_final_event() -> None:
     observations = _ObservationLog()
     start = observations.transcript_count
     observations.record_transcription(1.0, "agent", "READY", final=True)
+    observations.record_transcription(1.1, "agent", "REA", final=False)
 
     assert not _streamed_assistant_text_observed(observations, start, "agent", "READY")
 
-    observations.record_transcription(1.1, "agent", "REA", final=False)
+
+def test_streamed_text_accepts_expected_text_accumulated_from_non_final_events() -> None:
+    observations = _ObservationLog()
+    start = observations.transcript_count
+    observations.record_transcription(1.0, "agent", "REA", final=False)
+    observations.record_transcription(1.1, "agent", "DY", final=False)
+
     assert _streamed_assistant_text_observed(observations, start, "agent", "READY")
+
+
+def test_interruption_evidence_rejects_final_only_marker_before_stop() -> None:
+    observations = _ObservationLog()
+    retired_start = observations.boundary(0.9)
+    observations.record_transcription(1.0, "agent", "RETIRE-ME", final=True)
+    observations.record_nonzero_audio(1.01)
+    boundary = observations.boundary(1.02)
+
+    with pytest.raises(AssertionError, match="non-final output was not observed"):
+        _assert_interruption_evidence(
+            observations,
+            retired_start,
+            boundary,
+            agent_identity="agent",
+            marker="RETIRE-ME",
+            silence_limit_seconds=0.2,
+        )
 
 
 def test_interruption_boundary_proves_marker_before_stop_and_rejects_late_marker() -> None:
@@ -34,6 +59,52 @@ def test_interruption_boundary_proves_marker_before_stop_and_rejects_late_marker
             observations,
             retired_start,
             boundary,
+            agent_identity="agent",
+            marker="RETIRE-ME",
+            silence_limit_seconds=0.2,
+        )
+
+
+def test_interruption_evidence_ignores_continuity_audio_for_silence_gate() -> None:
+    observations = _ObservationLog()
+    retired_start = observations.boundary(0.9)
+    observations.record_transcription(1.0, "agent", "RETIRE-ME", final=False)
+    observations.record_nonzero_audio(1.01)
+    stop_boundary = observations.boundary(1.02)
+    observations.record_nonzero_audio(1.08)
+    continuity_start = observations.boundary(1.25)
+    observations.record_transcription(1.3, "agent", "violet", final=False)
+    observations.record_nonzero_audio(1.31)
+
+    assert _assert_interruption_evidence(
+        observations,
+        retired_start,
+        stop_boundary,
+        audio_end=continuity_start,
+        agent_identity="agent",
+        marker="RETIRE-ME",
+        silence_limit_seconds=0.2,
+    ) == pytest.approx(0.06)
+
+
+def test_interruption_evidence_rejects_marker_arriving_during_continuity() -> None:
+    observations = _ObservationLog()
+    retired_start = observations.boundary(0.9)
+    observations.record_transcription(1.0, "agent", "RETIRE-ME", final=False)
+    observations.record_nonzero_audio(1.01)
+    stop_boundary = observations.boundary(1.02)
+    observations.record_nonzero_audio(1.08)
+    continuity_start = observations.boundary(1.25)
+    observations.record_transcription(1.3, "agent", "violet", final=False)
+    observations.record_nonzero_audio(1.31)
+    observations.record_transcription(1.4, "agent", "RETIRE-ME", final=True)
+
+    with pytest.raises(AssertionError, match="retired Hermes text"):
+        _assert_interruption_evidence(
+            observations,
+            retired_start,
+            stop_boundary,
+            audio_end=continuity_start,
             agent_identity="agent",
             marker="RETIRE-ME",
             silence_limit_seconds=0.2,

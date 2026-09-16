@@ -104,14 +104,12 @@ def _assistant_text(observations: _ObservationLog, since: int, identity: str) ->
 def _streamed_assistant_text_observed(
     observations: _ObservationLog, since: int, identity: str, expected: str
 ) -> bool:
-    events = [
-        event
+    non_final_text = "".join(
+        event.text
         for event in observations.transcriptions[since:]
-        if event.participant_identity == identity
-    ]
-    return expected.casefold() in "".join(event.text for event in events).casefold() and any(
-        event.text and not event.final for event in events
+        if event.participant_identity == identity and not event.final
     )
+    return expected.casefold() in non_final_text.casefold()
 
 
 def _assert_interruption_evidence(
@@ -119,6 +117,7 @@ def _assert_interruption_evidence(
     retired_start: _ObservationBoundary,
     boundary: _ObservationBoundary,
     *,
+    audio_end: _ObservationBoundary | None = None,
     agent_identity: str,
     marker: str,
     silence_limit_seconds: float,
@@ -128,9 +127,10 @@ def _assert_interruption_evidence(
     ]
     assert any(
         event.participant_identity == agent_identity
+        and not event.final
         and marker.casefold() in event.text.casefold()
         for event in before
-    ), "The retired-run marker was not observed before interruption."
+    ), "The retired-run marker in non-final output was not observed before interruption."
     assert boundary.audio_count > retired_start.audio_count, (
         "No retired-run audio was observed before interruption."
     )
@@ -142,7 +142,8 @@ def _assert_interruption_evidence(
         for event in after
     ), "Observed retired Hermes text after the stop boundary."
 
-    post_stop_audio = observations.nonzero_audio_at[boundary.audio_count :]
+    audio_end_count = audio_end.audio_count if audio_end is not None else None
+    post_stop_audio = observations.nonzero_audio_at[boundary.audio_count : audio_end_count]
     stop_to_silence = (
         max(0.0, max(post_stop_audio) - boundary.observed_at) if post_stop_audio else 0.0
     )
@@ -473,22 +474,24 @@ async def test_continuous_hermes_room_tools_approval_interrupt_continuity_and_dr
         assert interrupt["hermesTerminalAcknowledged"] is True
         assert interrupt["actionUndone"] is False
         await asyncio.sleep(0.25)
-        stop_to_silence = _assert_interruption_evidence(
-            observations,
-            retired_start,
-            stop_boundary,
-            agent_identity=agent_identity,
-            marker="RETIRE-ME",
-            silence_limit_seconds=0.2,
-        )
 
-        # Same Hermes session must retain memory after retired output has been ruled out.
-        continuity_start = observations.transcript_count
+        # Same Hermes session must retain memory while stale text remains monitored.
+        continuity_start = observations.boundary(time.perf_counter())
         await send_and_wait(
             "What word did I ask you to remember? Reply only with that word.", memory_word
         )
         await wait_listening()
-        assert memory_word.casefold() in assistant_text(continuity_start).casefold()
+        continuity_text = assistant_text(continuity_start.transcript_count)
+        assert memory_word.casefold() in continuity_text.casefold()
+        stop_to_silence = _assert_interruption_evidence(
+            observations,
+            retired_start,
+            stop_boundary,
+            audio_end=continuity_start,
+            agent_identity=agent_identity,
+            marker="RETIRE-ME",
+            silence_limit_seconds=0.2,
+        )
 
         assert studio.metrics["llmFirstTokenSeconds"] is not None
         assert studio.metrics["ttsFirstFrameSeconds"] is not None
