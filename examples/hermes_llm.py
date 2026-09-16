@@ -49,6 +49,13 @@ class _RunState:
     stop_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
+@dataclass
+class _PendingApproval:
+    state: _RunState
+    choices: tuple[str, ...]
+    in_flight: bool = False
+
+
 @dataclass(frozen=True)
 class HermesRunHandle:
     """Opaque identity for one exact run owned by a HermesLLM instance."""
@@ -80,7 +87,7 @@ class HermesLLM(llm.LLM[Never]):
         self._generation = 0
         self._active: _RunState | None = None
         self._run_handle_owner = object()
-        self._pending_approvals: dict[str, tuple[_RunState, tuple[str, ...]]] = {}
+        self._pending_approvals: dict[str, _PendingApproval] = {}
         self._uncertain = False
 
     @property
@@ -127,7 +134,7 @@ class HermesLLM(llm.LLM[Never]):
         pending = self._pending_approvals.get(request_id)
         if pending is None:
             raise _error("The Hermes approval request is not current.")
-        state, choices = pending
+        state = pending.state
         if (
             state.run_id != run_id
             or self._active is not state
@@ -135,16 +142,24 @@ class HermesLLM(llm.LLM[Never]):
             or state.stop_requested
         ):
             raise _error("The Hermes approval request is not current.")
-        if choice not in choices:
+        if choice not in pending.choices:
             raise _error("The Hermes approval choice is not valid for this request.")
-        self._pending_approvals.pop(request_id, None)
+        if pending.in_flight:
+            raise _error("The Hermes approval request is already being processed.")
+        pending.in_flight = True
         try:
             await self._client.approve(state.run_id, request_id, choice)
         except asyncio.CancelledError:
+            if self._pending_approvals.get(request_id) is pending:
+                pending.in_flight = False
             raise
         except Exception:
+            if self._pending_approvals.get(request_id) is pending:
+                pending.in_flight = False
             raise _error("Hermes approval response failed.") from None
-        await self._notify_resolution(state.run_id, request_id)
+        if self._pending_approvals.get(request_id) is pending:
+            self._pending_approvals.pop(request_id)
+            await self._notify_resolution(state.run_id, request_id)
 
     async def stop_active(self) -> bool:
         state = self._active
@@ -202,8 +217,8 @@ class HermesLLM(llm.LLM[Never]):
     async def _clear_approvals(self, state: _RunState) -> None:
         request_ids = [
             request_id
-            for request_id, (owner, _choices) in self._pending_approvals.items()
-            if owner is state
+            for request_id, pending in self._pending_approvals.items()
+            if pending.state is state
         ]
         for request_id in request_ids:
             self._pending_approvals.pop(request_id, None)
@@ -276,7 +291,7 @@ class _HermesStream(llm.LLMStream):
         if request_id in state.approval_ids:
             raise _error("Hermes reused an approval request identifier.")
         state.approval_ids.add(request_id)
-        owner._pending_approvals[request_id] = (state, exact_choices)
+        owner._pending_approvals[request_id] = _PendingApproval(state, exact_choices)
         await owner._on_approval(
             ApprovalRequest(state.run_id, request_id, command, exact_choices)
         )
@@ -315,7 +330,7 @@ class _HermesStream(llm.LLMStream):
                 request_id = event.payload.get("request_id")
                 if isinstance(request_id, str):
                     pending = owner._pending_approvals.get(request_id)
-                    if pending is not None and pending[0] is state:
+                    if pending is not None and pending.state is state:
                         owner._pending_approvals.pop(request_id, None)
                         await owner._notify_resolution(state.run_id, request_id)
 

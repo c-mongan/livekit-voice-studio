@@ -447,6 +447,145 @@ async def test_approval_response_requires_current_exact_request_and_choice(
         await model.respond_to_approval("run_1", "req_1", "once")
 
 
+async def test_failed_approval_response_can_be_retried(client: FakeClient) -> None:
+    approval_seen = asyncio.Event()
+    continue_events = asyncio.Event()
+
+    async def events(_run_id: str) -> AsyncIterator[RunEvent]:
+        yield RunEvent(
+            "approval.request",
+            {
+                "run_id": "run_1",
+                "request_id": "req_1",
+                "command": "safe summary",
+                "choices": ["once", "deny"],
+            },
+        )
+        approval_seen.set()
+        await continue_events.wait()
+        yield RunEvent("run.completed", {"run_id": "run_1", "status": "completed"})
+
+    attempts: list[tuple[str, str, str]] = []
+
+    async def approve(run_id: str, request_id: str, choice: str) -> None:
+        attempts.append((run_id, request_id, choice))
+        if len(attempts) == 1:
+            raise RuntimeError("temporary upstream failure")
+
+    client.events = events  # type: ignore[method-assign]
+    client.approve = approve  # type: ignore[method-assign]
+    on_resolved = AsyncMock()
+    model = HermesLLM(
+        client=client, on_approval=AsyncMock(), on_approval_resolved=on_resolved
+    )
+    task = asyncio.create_task(collect(model.chat(chat_ctx=context(("user", "one")))))
+    await approval_seen.wait()
+
+    with pytest.raises(APIError, match="approval response failed"):
+        await model.respond_to_approval("run_1", "req_1", "once")
+    on_resolved.assert_not_awaited()
+
+    await model.respond_to_approval("run_1", "req_1", "once")
+    assert attempts == [("run_1", "req_1", "once"), ("run_1", "req_1", "once")]
+    on_resolved.assert_awaited_once_with(ApprovalResolution("run_1", "req_1"))
+
+    continue_events.set()
+    await task
+    on_resolved.assert_awaited_once()
+
+
+async def test_terminal_cleanup_resolves_failed_approval_once(client: FakeClient) -> None:
+    approval_seen = asyncio.Event()
+    send_terminal = asyncio.Event()
+
+    async def events(_run_id: str) -> AsyncIterator[RunEvent]:
+        yield RunEvent(
+            "approval.request",
+            {
+                "run_id": "run_1",
+                "request_id": "req_1",
+                "command": "safe summary",
+                "choices": ["once", "deny"],
+            },
+        )
+        approval_seen.set()
+        await send_terminal.wait()
+        yield RunEvent("run.completed", {"run_id": "run_1", "status": "completed"})
+
+    async def failing_approve(_run_id: str, _request_id: str, _choice: str) -> None:
+        raise RuntimeError("temporary upstream failure")
+
+    client.events = events  # type: ignore[method-assign]
+    client.approve = failing_approve  # type: ignore[method-assign]
+    on_resolved = AsyncMock()
+    model = HermesLLM(
+        client=client, on_approval=AsyncMock(), on_approval_resolved=on_resolved
+    )
+    task = asyncio.create_task(collect(model.chat(chat_ctx=context(("user", "one")))))
+    await approval_seen.wait()
+
+    with pytest.raises(APIError, match="approval response failed"):
+        await model.respond_to_approval("run_1", "req_1", "once")
+    on_resolved.assert_not_awaited()
+
+    send_terminal.set()
+    await task
+    on_resolved.assert_awaited_once_with(ApprovalResolution("run_1", "req_1"))
+    with pytest.raises(APIError, match="approval request"):
+        await model.respond_to_approval("run_1", "req_1", "once")
+
+
+async def test_simultaneous_approval_responses_reach_hermes_once(client: FakeClient) -> None:
+    approval_seen = asyncio.Event()
+    continue_events = asyncio.Event()
+    approve_started = asyncio.Event()
+    finish_approve = asyncio.Event()
+    attempts: list[tuple[str, str, str]] = []
+
+    async def events(_run_id: str) -> AsyncIterator[RunEvent]:
+        yield RunEvent(
+            "approval.request",
+            {
+                "run_id": "run_1",
+                "request_id": "req_1",
+                "command": "safe summary",
+                "choices": ["once", "deny"],
+            },
+        )
+        approval_seen.set()
+        await continue_events.wait()
+        yield RunEvent("run.completed", {"run_id": "run_1", "status": "completed"})
+
+    async def blocking_approve(run_id: str, request_id: str, choice: str) -> None:
+        attempts.append((run_id, request_id, choice))
+        approve_started.set()
+        await finish_approve.wait()
+
+    client.events = events  # type: ignore[method-assign]
+    client.approve = blocking_approve  # type: ignore[method-assign]
+    on_resolved = AsyncMock()
+    model = HermesLLM(
+        client=client, on_approval=AsyncMock(), on_approval_resolved=on_resolved
+    )
+    stream_task = asyncio.create_task(collect(model.chat(chat_ctx=context(("user", "one")))))
+    await approval_seen.wait()
+
+    first_response = asyncio.create_task(
+        model.respond_to_approval("run_1", "req_1", "once")
+    )
+    await approve_started.wait()
+    with pytest.raises(APIError, match="already being processed"):
+        await model.respond_to_approval("run_1", "req_1", "once")
+    assert attempts == [("run_1", "req_1", "once")]
+
+    finish_approve.set()
+    await first_response
+    on_resolved.assert_awaited_once_with(ApprovalResolution("run_1", "req_1"))
+    continue_events.set()
+    await stream_task
+    on_resolved.assert_awaited_once()
+
+
 async def test_duplicate_approval_request_id_fails_closed(client: FakeClient) -> None:
     request = RunEvent(
         "approval.request",
