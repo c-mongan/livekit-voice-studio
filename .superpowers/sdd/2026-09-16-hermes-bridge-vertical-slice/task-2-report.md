@@ -52,3 +52,34 @@ The `uv run` interpreter was verified as the worktree `.venv` Python 3.12 enviro
 ## Concerns
 
 - No blocker found in the requested unit-tested adapter scope. A live Hermes/LiveKit interruption test is still required by the broader design before release to establish how partial assistant text persists in durable Hermes history.
+
+## Fix round 1: total cancellation deadline and error sanitization
+
+### Status
+
+DONE
+
+### Changes
+
+- Established one monotonic deadline before sending `stop()` and applied the same `stop_timeout` budget to both the stop request and terminal-status polling.
+- A hung or slow stop request now times out, marks the adapter uncertain, returns an unacknowledged result, and blocks adapter reuse.
+- Added private `_AdapterAPIError`; only adapter-authored safe errors are rethrown unchanged.
+- Arbitrary callback and transport exceptions, including LiveKit `APIError`, are converted to non-retryable adapter-safe errors with suppressed exception chaining.
+- Added regressions for a never-returning stop request and a callback-raised `APIError` carrying secret detail and a secret chained cause.
+
+### TDD evidence
+
+- `test_stop_timeout_includes_hanging_stop_request` initially exceeded its 0.2-second outer guard because `client.stop()` was awaited before the configured timeout.
+- `test_callback_api_error_is_fully_sanitized` initially captured `SECRET callback detail` in LiveKit's retry log because arbitrary `APIError` values were rethrown as trusted.
+- After the scoped fixes, both regressions passed together.
+
+### Verification
+
+- `uv run pytest tests/test_hermes_llm.py -v` — 21 passed.
+- `uv run ruff check examples/hermes_llm.py tests/test_hermes_llm.py` — passed.
+- `uv run mypy examples/hermes_llm.py` — passed with no issues.
+- `git diff --check` — passed.
+
+### Concerns
+
+- None in the requested fix scope.

@@ -1,6 +1,7 @@
 """Deterministic LiveKit-to-Hermes adapter tests; no network or inference."""
 
 import asyncio
+import traceback
 from collections.abc import AsyncIterator
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -167,6 +168,37 @@ async def test_stop_timeout_marks_adapter_uncertain(client: FakeClient) -> None:
     assert client.stopped == ["run_1"]
 
 
+async def test_stop_timeout_includes_hanging_stop_request(client: FakeClient) -> None:
+    client.config.stop_timeout = 0.02
+    client.runs = [[]]
+    client.block_events = True
+    stop_started = asyncio.Event()
+
+    async def hanging_stop(run_id: str) -> dict[str, object]:
+        client.stopped.append(run_id)
+        stop_started.set()
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+    client.stop = hanging_stop  # type: ignore[method-assign]
+    model = HermesLLM(client=client, on_approval=AsyncMock())
+    stream = model.chat(chat_ctx=context(("user", "one")))
+    task = asyncio.create_task(collect(stream))
+    await client.started.wait()
+
+    loop = asyncio.get_running_loop()
+    started_at = loop.time()
+    assert await asyncio.wait_for(model.stop_active(), timeout=0.2) is False
+    assert loop.time() - started_at < 0.15
+    assert stop_started.is_set()
+    assert client.stopped == ["run_1"]
+    with pytest.raises(APIError, match="uncertain"):
+        model.chat(chat_ctx=context(("user", "two")))
+
+    await stream.aclose()
+    await task
+
+
 async def test_stop_active_returns_acknowledgement_and_sends_stop_once(client: FakeClient) -> None:
     client.runs = [[]]
     client.block_events = True
@@ -285,6 +317,46 @@ async def test_approval_is_forwarded_exactly_without_becoming_speech(client: Fak
     on_approval.assert_awaited_once_with(
         ApprovalRequest("run_1", "req_1", "rm redacted-file", ("once", "deny"))
     )
+
+
+async def test_callback_api_error_is_fully_sanitized(
+    client: FakeClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    client.runs = [
+        [
+            RunEvent(
+                "approval.request",
+                {
+                    "run_id": "run_1",
+                    "request_id": "req_1",
+                    "command": "redacted command",
+                    "choices": ["once", "deny"],
+                },
+            )
+        ]
+    ]
+    client.statuses["run_1"] = [{"status": "cancelled"}]
+
+    async def unsafe_callback(_request: ApprovalRequest) -> None:
+        try:
+            raise RuntimeError("SECRET callback context")
+        except RuntimeError as cause:
+            raise APIError("SECRET callback detail", retryable=True) from cause
+
+    model = HermesLLM(client=client, on_approval=unsafe_callback)
+
+    with pytest.raises(APIError) as caught:
+        await collect(model.chat(chat_ctx=context(("user", "one"))))
+
+    formatted = "".join(traceback.format_exception(caught.value))
+    assert str(caught.value) == "Hermes run failed."
+    assert "SECRET" not in formatted
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None or caught.value.__suppress_context__
+    assert caught.value.retryable is False
+    assert "SECRET" not in caplog.text
+    assert len(client.starts) == 1
+    assert client.stopped == ["run_1"]
 
 
 async def test_approval_response_requires_current_exact_request_and_choice(

@@ -16,8 +16,12 @@ from examples.hermes_api import HermesRunsClient, RunEvent
 _TERMINAL_STATES = frozenset({"completed", "failed", "cancelled", "interrupted"})
 
 
-def _error(message: str) -> APIError:
-    return APIError(message, retryable=False)
+class _AdapterAPIError(APIError):
+    """An API error whose message is safe to expose outside this adapter."""
+
+
+def _error(message: str) -> _AdapterAPIError:
+    return _AdapterAPIError(message, retryable=False)
 
 
 @dataclass(frozen=True)
@@ -123,12 +127,13 @@ class HermesLLM(llm.LLM[Never]):
         async with state.stop_lock:
             if state.terminal:
                 return True
+            timeout = self._client.config.stop_timeout
+            deadline = asyncio.get_running_loop().time() + timeout
             try:
-                if not state.stop_sent:
-                    state.stop_sent = True
-                    await self._client.stop(state.run_id)
-                timeout = self._client.config.stop_timeout
-                async with asyncio.timeout(timeout):
+                async with asyncio.timeout_at(deadline):
+                    if not state.stop_sent:
+                        state.stop_sent = True
+                        await self._client.stop(state.run_id)
                     while True:
                         status = await self._client.status(state.run_id)
                         value = status.get("status")
@@ -289,7 +294,7 @@ class _HermesStream(llm.LLMStream):
                 state.stop_requested = True
                 await owner._stop_and_wait(state)
                 raise _error("Hermes run timed out.") from None
-            except APIError:
+            except _AdapterAPIError:
                 if not state.terminal:
                     state.stop_requested = True
                     await owner._stop_and_wait(state)
