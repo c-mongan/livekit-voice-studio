@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type FormEvent } from 'react';
 import { StartAudio, useLocalParticipant, useMultibandTrackVolume, useSessionMessages } from '@livekit/components-react';
+import { RoomEvent, type RemoteParticipant } from 'livekit-client';
 import { AgentSessionProvider } from './components/agent-session-provider';
-import { measuredSeconds, safeMessage, type StudioStatus } from './api';
+import { parseHermesApprovalRequest, measuredSeconds, safeMessage, type HermesApprovalChoice, type HermesApprovalRequest, type StudioStatus } from './api';
+import { HermesApproval } from './HermesApproval';
 import { MAX_MESSAGE_LENGTH, mergeTranscript, validMessage, workspaceState, type TranscriptMessage, type WorkspaceState } from './state';
 import { useStudio } from './useStudio';
 import { useStudioAgent } from './useStudioAgent';
@@ -92,6 +94,8 @@ function Workspace({ studio, setMuted }: { studio: Studio; setMuted: (muted: boo
   const [interrupting, setInterrupting] = useState(false);
   const [messages, setMessages] = useState<TranscriptMessage[]>([]);
   const [announcement, setAnnouncement] = useState('');
+  const [approval, setApproval] = useState<HermesApprovalRequest | null>(null);
+  const previousAgentState = useRef(agent.state);
   const cleared = useRef(new Set<string>());
   const sendingRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -113,6 +117,61 @@ function Workspace({ studio, setMuted }: { studio: Studio; setMuted: (muted: boo
   const canSend = validMessage(draft) && !sending && !pendingText && !starting && !ending && (agentReady || (canStart && consent));
   const mlx = status?.voice.backend === 'mlx';
   const streaming = mlx && status?.voice.streaming === true;
+
+  useEffect(() => {
+    const receiveApproval = (
+      payload: Uint8Array,
+      participant?: RemoteParticipant,
+      _kind?: unknown,
+      topic?: string,
+    ) => {
+      if (topic !== 'hermes.approval.request' || participant?.identity !== grant?.agentIdentity) return;
+      const request = parseHermesApprovalRequest(payload);
+      if (request) setApproval(request);
+    };
+    session.room.on(RoomEvent.DataReceived, receiveApproval);
+    return () => { session.room.off(RoomEvent.DataReceived, receiveApproval); };
+  }, [grant?.agentIdentity, session.room]);
+
+  useEffect(() => {
+    const previous = previousAgentState.current;
+    previousAgentState.current = agent.state;
+    if (
+      approval
+      && ['thinking', 'speaking'].includes(previous)
+      && ['listening', 'failed', 'disconnected'].includes(agent.state)
+    ) setApproval(null);
+  }, [agent.state]); // approval intentionally excluded: only a later terminal transition clears it.
+
+  useEffect(() => {
+    if (!grant || session.connectionState === 'disconnected') setApproval(null);
+  }, [grant, session.connectionState]);
+
+  const respondToApproval = useCallback(async (
+    request: HermesApprovalRequest,
+    choice: HermesApprovalChoice,
+  ) => {
+    if (!grant) throw new Error('No owned session.');
+    const response = await local.localParticipant.performRpc({
+      destinationIdentity: grant.agentIdentity,
+      method: 'hermes.approval.respond',
+      payload: JSON.stringify({ runId: request.runId, requestId: request.requestId, choice }),
+      responseTimeout: 5_000,
+    });
+    let acknowledgement: unknown;
+    try { acknowledgement = JSON.parse(response); } catch { throw new Error('Invalid acknowledgement.'); }
+    if (
+      !acknowledgement
+      || typeof acknowledgement !== 'object'
+      || Array.isArray(acknowledgement)
+      || Object.keys(acknowledgement).length !== 1
+      || (acknowledgement as Record<string, unknown>).accepted !== true
+    ) throw new Error('Invalid acknowledgement.');
+  }, [grant, local.localParticipant]);
+
+  const clearAcceptedApproval = useCallback((accepted: HermesApprovalRequest) => {
+    setApproval((current) => current?.runId === accepted.runId && current.requestId === accepted.requestId ? null : current);
+  }, []);
 
   useEffect(() => {
     const incoming = chat.messages.map((message) => ({
@@ -272,6 +331,11 @@ function Workspace({ studio, setMuted }: { studio: Studio; setMuted: (muted: boo
           {studio.error && <div className="notice error" role="alert"><p>{studio.error}</p><button className="button quiet" onClick={() => studio.setError(null)} aria-label="Dismiss error"><Icon name="close" /></button></div>}
           {studio.heartbeatError && <div className="notice warning"><p>{studio.heartbeatError}</p></div>}
         </div>
+        {approval && <HermesApproval
+          request={approval}
+          onRespond={respondToApproval}
+          onAccepted={clearAcceptedApproval}
+        />}
         <section className="conversation" aria-label="Conversation transcript">
           <div className="transcript-heading"><h2>Conversation</h2><button className="button quiet clear-button" disabled={!messages.length} onClick={clearTranscript}>Clear transcript</button></div>
           <div className="transcript" ref={scrollRef} role="log" aria-label="Conversation messages" aria-live="polite" aria-relevant="additions text" tabIndex={0} onScroll={(event) => {

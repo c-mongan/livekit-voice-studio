@@ -114,13 +114,18 @@ class HermesLLM(llm.LLM[Never]):
             raise _error("Hermes owns tools; LiveKit tools are not accepted.")
         return _HermesStream(self, chat_ctx=chat_ctx.copy(), conn_options=conn_options)
 
-    async def respond_to_approval(self, request_id: str, choice: str) -> None:
+    async def respond_to_approval(self, run_id: str, request_id: str, choice: str) -> None:
         self._check_ready()
         pending = self._pending_approvals.get(request_id)
         if pending is None:
             raise _error("The Hermes approval request is not current.")
         state, choices = pending
-        if self._active is not state or state.terminal or state.stop_requested:
+        if (
+            state.run_id != run_id
+            or self._active is not state
+            or state.terminal
+            or state.stop_requested
+        ):
             raise _error("The Hermes approval request is not current.")
         if choice not in choices:
             raise _error("The Hermes approval choice is not valid for this request.")

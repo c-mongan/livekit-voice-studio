@@ -6,7 +6,71 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from examples import studio_worker
-from examples.hermes_llm import HermesLLM
+from examples.hermes_llm import ApprovalRequest, HermesLLM
+
+
+async def test_approval_request_is_bounded_and_targeted_to_owner() -> None:
+    participant = SimpleNamespace(publish_data=AsyncMock())
+    room = SimpleNamespace(local_participant=participant)
+    request = ApprovalRequest("run-1", "request-1", "x" * 700, ("once", "deny"))
+
+    await studio_worker.publish_approval(room, "owner", request)
+
+    participant.publish_data.assert_awaited_once()
+    call = participant.publish_data.await_args
+    payload = json.loads(call.args[0])
+    assert payload == {
+        "runId": "run-1",
+        "requestId": "request-1",
+        "command": "x" * 500,
+        "choices": ["once", "deny"],
+    }
+    assert len(call.args[0].encode("utf-8")) <= 4096
+    assert call.kwargs == {
+        "reliable": True,
+        "destination_identities": ["owner"],
+        "topic": "hermes.approval.request",
+    }
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        '{"runId":"run-1","requestId":"request-1","choice":"once","extra":true}',
+        '{"runId":"run-1","requestId":"request-1","choice":"secret"}',
+        '{"runId":"run-1","requestId":"request-1","choice":"once"} trailing',
+        "{",
+        "x" * 4097,
+    ],
+)
+async def test_approval_rpc_rejects_unknown_invalid_or_oversized_payloads(payload: str) -> None:
+    model = Mock(spec=HermesLLM)
+    model.respond_to_approval = AsyncMock()
+
+    with pytest.raises(studio_worker.rtc.RpcError):
+        await studio_worker.respond_to_approval_rpc(
+            model, "owner", SimpleNamespace(caller_identity="owner", payload=payload)
+        )
+
+    model.respond_to_approval.assert_not_awaited()
+
+
+async def test_approval_rpc_requires_owner_and_exact_identifiers() -> None:
+    model = Mock(spec=HermesLLM)
+    model.respond_to_approval = AsyncMock()
+    payload = json.dumps({"runId": "run-1", "requestId": "request-1", "choice": "deny"})
+
+    with pytest.raises(studio_worker.rtc.RpcError) as denied:
+        await studio_worker.respond_to_approval_rpc(
+            model, "owner", SimpleNamespace(caller_identity="intruder", payload=payload)
+        )
+    assert denied.value.code == 1403
+    assert json.loads(
+        await studio_worker.respond_to_approval_rpc(
+            model, "owner", SimpleNamespace(caller_identity="owner", payload=payload)
+        )
+    ) == {"accepted": True}
+    model.respond_to_approval.assert_awaited_once_with("run-1", "request-1", "deny")
 
 
 @pytest.mark.parametrize("drain_succeeds", [True, False])
@@ -40,10 +104,14 @@ async def test_rpc_registration_follows_connection_and_shutdown_drains(monkeypat
             assert self.connected, "RPC cannot be registered before the local participant exists."
 
             def register(name, callback):
-                order.append("rpc")
-                handlers["rpc"] = callback
+                order.append(f"rpc:{name}")
+                handlers[name] = callback
 
-            return SimpleNamespace(register_rpc_method=register)
+            async def publish_data(payload, **kwargs):
+                order.append("approval-published")
+                handlers["published"] = (payload, kwargs)
+
+            return SimpleNamespace(register_rpc_method=register, publish_data=publish_data)
 
         async def disconnect(self):
             order.append("disconnect")
@@ -53,14 +121,36 @@ async def test_rpc_registration_follows_connection_and_shutdown_drains(monkeypat
 
     async def start(**kwargs):
         assert kwargs["record"] is False
+        assert approval_callback is not None
+        await approval_callback(
+            ApprovalRequest("run-approval", "request-approval", "redacted", ("once", "deny"))
+        )
+        published, publish_options = handlers["published"]
+        assert json.loads(published)["command"] == "redacted"
+        assert publish_options["destination_identities"] == ["user"]
+        approval_result = await handlers["hermes.approval.respond"](
+            SimpleNamespace(
+                caller_identity="user",
+                payload=json.dumps(
+                    {
+                        "runId": "run-approval",
+                        "requestId": "request-approval",
+                        "choice": "deny",
+                    }
+                ),
+            )
+        )
+        assert json.loads(approval_result) == {"accepted": True}
         with pytest.raises(studio_worker.rtc.RpcError) as error:
-            await handlers["rpc"](SimpleNamespace(caller_identity="another-participant"))
+            await handlers["voicebox.interrupt"](
+                SimpleNamespace(caller_identity="another-participant")
+            )
         assert error.value.code == 1403
         first = asyncio.create_task(
-            handlers["rpc"](SimpleNamespace(caller_identity="user"))
+            handlers["voicebox.interrupt"](SimpleNamespace(caller_identity="user"))
         )
         repeated_call = asyncio.create_task(
-            handlers["rpc"](SimpleNamespace(caller_identity="user"))
+            handlers["voicebox.interrupt"](SimpleNamespace(caller_identity="user"))
         )
         await playback_started.wait()
         await asyncio.sleep(0)
@@ -129,10 +219,18 @@ async def test_rpc_registration_follows_connection_and_shutdown_drains(monkeypat
     )
     model.stop_run = AsyncMock(side_effect=stop_exact)
     model.stop_active = AsyncMock(side_effect=stop_hermes)
+    model.respond_to_approval = AsyncMock()
     model.aclose = AsyncMock()
+    approval_callback = None
+
+    async def configure_ai(*, on_approval=None):
+        nonlocal approval_callback
+        approval_callback = on_approval
+        return speech, model
+
     monkeypatch.setattr(studio_worker.rtc, "Room", Room)
     monkeypatch.setattr(studio_worker, "configured_provider", lambda: provider)
-    monkeypatch.setattr(studio_worker, "configured_ai", AsyncMock(return_value=(speech, model)))
+    monkeypatch.setattr(studio_worker, "configured_ai", configure_ai)
     monkeypatch.setattr(studio_worker, "AgentSession", Mock(return_value=session))
     monkeypatch.setattr(
         studio_worker, "report", lambda event, **data: reports.append((event, data))
@@ -155,7 +253,9 @@ async def test_rpc_registration_follows_connection_and_shutdown_drains(monkeypat
         "interruption": {"mode": "vad"},
         "preemptive_generation": {"enabled": False},
     }
-    assert order.index("connect") < order.index("rpc")
+    assert order.index("connect") < order.index("rpc:voicebox.interrupt")
+    assert order.index("connect") < order.index("rpc:hermes.approval.respond")
+    assert order.index("rpc:hermes.approval.respond") < order.index("approval-published")
     assert order.index("playback-stopped") < order.index("hermes-stop:run-1")
     assert order.index("provider-drained") < order.index("disconnect")
     assert reports[-1] == ("finished", {"safe": drain_succeeds})
@@ -163,6 +263,9 @@ async def test_rpc_registration_follows_connection_and_shutdown_drains(monkeypat
     session.interrupt.assert_awaited_with(force=True)
     assert exact_stops == ["run-1"]
     model.stop_active.assert_not_awaited()
+    model.respond_to_approval.assert_awaited_once_with(
+        "run-approval", "request-approval", "deny"
+    )
     assert studio_worker.AgentSession.call_args.kwargs["llm"] is model
     assert session.start.await_args.kwargs["agent"].instructions == (
         "Reply for speech: concise plain text unless detail is needed. "

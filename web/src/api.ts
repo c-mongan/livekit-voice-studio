@@ -1,3 +1,46 @@
+export interface HermesApprovalRequest {
+  runId: string;
+  requestId: string;
+  command: string;
+  choices: HermesApprovalChoice[];
+}
+
+export type HermesApprovalChoice = 'once' | 'session' | 'always' | 'deny';
+const HERMES_APPROVAL_CHOICES = new Set<HermesApprovalChoice>(['once', 'session', 'always', 'deny']);
+
+export function parseHermesApprovalRequest(payload: Uint8Array): HermesApprovalRequest | null {
+  if (payload.byteLength > 4096) return null;
+  let value: unknown;
+  try {
+    value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(payload));
+  } catch {
+    return null;
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (
+    Object.keys(record).length !== 4
+    || !Object.hasOwn(record, 'runId')
+    || !Object.hasOwn(record, 'requestId')
+    || !Object.hasOwn(record, 'command')
+    || !Object.hasOwn(record, 'choices')
+    || typeof record.runId !== 'string'
+    || !record.runId
+    || record.runId.length > 200
+    || typeof record.requestId !== 'string'
+    || !record.requestId
+    || record.requestId.length > 200
+    || typeof record.command !== 'string'
+    || record.command.length > 500
+    || !Array.isArray(record.choices)
+    || record.choices.length < 1
+    || record.choices.length > 4
+    || record.choices.some((choice) => typeof choice !== 'string' || !HERMES_APPROVAL_CHOICES.has(choice as HermesApprovalChoice))
+    || new Set(record.choices).size !== record.choices.length
+  ) return null;
+  return record as unknown as HermesApprovalRequest;
+}
+
 export interface StudioStatus {
   ready: boolean;
   phase: 'idle' | 'starting' | 'active' | 'draining' | 'blocked';

@@ -424,17 +424,19 @@ async def test_approval_response_requires_current_exact_request_and_choice(
     await approval_seen.wait()
 
     with pytest.raises(APIError, match="approval request"):
-        await model.respond_to_approval("wrong", "once")
-    with pytest.raises(APIError, match="approval choice"):
-        await model.respond_to_approval("req_1", "always")
-    await model.respond_to_approval("req_1", "once")
+        await model.respond_to_approval("run_1", "wrong", "once")
     with pytest.raises(APIError, match="approval request"):
-        await model.respond_to_approval("req_1", "once")
+        await model.respond_to_approval("wrong-run", "req_1", "once")
+    with pytest.raises(APIError, match="approval choice"):
+        await model.respond_to_approval("run_1", "req_1", "always")
+    await model.respond_to_approval("run_1", "req_1", "once")
+    with pytest.raises(APIError, match="approval request"):
+        await model.respond_to_approval("run_1", "req_1", "once")
     assert client.approvals == [("run_1", "req_1", "once")]
     continue_events.set()
     await task
     with pytest.raises(APIError, match="approval request"):
-        await model.respond_to_approval("req_1", "once")
+        await model.respond_to_approval("run_1", "req_1", "once")
 
 
 async def test_duplicate_approval_request_id_fails_closed(client: FakeClient) -> None:

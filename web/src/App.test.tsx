@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   chat: {} as Record<string, any>,
   mute: vi.fn(),
   bands: vi.fn(),
+  roomHandlers: {} as Record<string, (...args: any[]) => void>,
 }));
 vi.mock('./useStudio', () => ({ useStudio: () => mocks.studio }));
 vi.mock('./useStudioAgent', () => ({ useStudioAgent: () => mocks.agent }));
@@ -68,13 +69,21 @@ beforeEach(() => {
   vi.stubGlobal('matchMedia', vi.fn(() => mediaQuery));
   mocks.bands.mockReturnValue(new Array(36).fill(0));
   mocks.agent = { state: 'disconnected', isConnected: false, microphoneTrack: undefined };
-  const participant = { identity: 'test-you', get isMicrophoneEnabled() { return mocks.local.isMicrophoneEnabled; }, setMicrophoneEnabled: vi.fn().mockResolvedValue(undefined), performRpc: vi.fn().mockResolvedValue('{}') };
+  const participant = { identity: 'test-you', get isMicrophoneEnabled() { return mocks.local.isMicrophoneEnabled; }, setMicrophoneEnabled: vi.fn().mockResolvedValue(undefined), performRpc: vi.fn().mockResolvedValue('{"accepted":true}') };
   mocks.local = { isMicrophoneEnabled: false, localParticipant: participant };
   mocks.chat = { messages: [], send: vi.fn().mockResolvedValue({ id: 'sent' }), isSending: false };
+  mocks.roomHandlers = {};
+  const room = {
+    localParticipant: participant,
+    on: vi.fn((event: string, handler: (...args: any[]) => void) => { mocks.roomHandlers[event] = handler; }),
+    off: vi.fn((event: string, handler: (...args: any[]) => void) => {
+      if (mocks.roomHandlers[event] === handler) delete mocks.roomHandlers[event];
+    }),
+  };
   mocks.studio = {
     status: structuredClone(readyStatus), online: true, grant: null, connected: false,
     starting: false, ending: false, error: null, heartbeatError: null,
-    session: { connectionState: 'disconnected', room: { localParticipant: participant }, local: {} },
+    session: { connectionState: 'disconnected', room, local: {} },
     start: vi.fn().mockResolvedValue(true), end: vi.fn().mockResolvedValue(undefined), refresh: vi.fn(),
     setError: vi.fn((error) => { mocks.studio.error = error; render(); }),
   };
@@ -396,6 +405,48 @@ describe('microphone, playback and lifecycle controls', () => {
     expect(button('Start session').disabled).toBe(true);
     expect(host.textContent).toContain('owning browser');
     expect(mocks.studio.start).not.toHaveBeenCalled();
+  });
+});
+
+describe('Hermes approval flow', () => {
+  const approval = {
+    runId: 'run-approval', requestId: 'request-approval', command: 'rm redacted-file', choices: ['once', 'deny'],
+  };
+
+  async function receive(value: object, sender = testGrant.agentIdentity) {
+    await act(async () => mocks.roomHandlers.dataReceived(
+      new TextEncoder().encode(JSON.stringify(value)), { identity: sender }, 0, 'hermes.approval.request',
+    ));
+  }
+
+  it('accepts requests only from the granted agent and sends exact owner RPC data', async () => {
+    connect();
+    await mount();
+    await receive(approval, 'other-participant');
+    expect(host.textContent).not.toContain('rm redacted-file');
+    await receive({ ...approval, unknown: true });
+    expect(host.textContent).not.toContain('rm redacted-file');
+    await receive(approval);
+    expect(host.textContent).toContain('rm redacted-file');
+
+    await click(button('Deny'));
+    expect(mocks.local.localParticipant.performRpc).toHaveBeenCalledExactlyOnceWith({
+      destinationIdentity: testGrant.agentIdentity,
+      method: 'hermes.approval.respond',
+      payload: JSON.stringify({ runId: 'run-approval', requestId: 'request-approval', choice: 'deny' }),
+      responseTimeout: 5_000,
+    });
+    expect(host.textContent).not.toContain('rm redacted-file');
+  });
+
+  it('clears the matching approval when a run becomes terminal', async () => {
+    connect();
+    mocks.agent.state = 'thinking';
+    await mount();
+    await receive(approval);
+    expect(host.textContent).toContain('rm redacted-file');
+    await act(async () => { mocks.agent.state = 'listening'; render(); });
+    expect(host.textContent).not.toContain('rm redacted-file');
   });
 });
 
