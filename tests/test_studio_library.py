@@ -116,12 +116,21 @@ def test_codex_requires_explicit_restricted_agent_consent(tmp_path):
         )
 
 
-def test_local_defaults_are_explicit_not_a_silent_azure_fallback(tmp_path):
+def test_fresh_settings_honor_explicit_hermes_over_legacy_copilot(tmp_path, monkeypatch):
+    monkeypatch.setenv("VOICEBOX_AI_PROVIDER", "copilot")
+    monkeypatch.setenv("VOICEBOX_STT_PROVIDER", "nemotron")
+    monkeypatch.setenv("VOICEBOX_LLM_PROVIDER", "hermes")
+    monkeypatch.setenv("HERMES_PROFILE", "voice-profile")
+    monkeypatch.setenv("HERMES_API_BASE_URL", "https://hermes.example")
+
     settings = StudioLibrary(tmp_path).settings()
+
     assert settings["sttProvider"] == "nemotron"
-    assert settings["llmProvider"] == "copilot"
-    assert settings["llmModel"] == "gpt-5.6-luna"
-    assert settings["reasoningEffort"] == "low"
+    assert settings["llmProvider"] == "hermes"
+    assert settings["llmModel"] == "profile-default"
+    assert settings["reasoningEffort"] == "none"
+    assert settings["hermesProfile"] == "voice-profile"
+    assert settings["hermesBaseUrl"] == "https://hermes.example"
 
 
 def test_existing_settings_gain_hermes_defaults(tmp_path):
@@ -142,6 +151,29 @@ def test_existing_settings_gain_hermes_defaults(tmp_path):
 
     assert settings["hermesProfile"] == "default"
     assert settings["hermesBaseUrl"] == "http://127.0.0.1:8642"
+
+
+def test_saved_copilot_settings_take_precedence_over_hermes_environment(tmp_path, monkeypatch):
+    library = StudioLibrary(tmp_path)
+    private_json(
+        library.settings_path,
+        {
+            "sttProvider": "nemotron",
+            "llmProvider": "copilot",
+            "llmModel": "gpt-5.6-luna",
+            "reasoningEffort": "low",
+            "hermesProfile": "default",
+            "hermesBaseUrl": "http://127.0.0.1:8642",
+            "voiceId": None,
+            "codexRestrictedApproved": False,
+        },
+    )
+    monkeypatch.setenv("VOICEBOX_LLM_PROVIDER", "hermes")
+
+    library.apply_environment()
+
+    assert os.environ["VOICEBOX_LLM_PROVIDER"] == "copilot"
+    assert library.settings()["llmProvider"] == "copilot"
 
 
 def test_hermes_settings_are_fixed_and_validate_profile_and_url(tmp_path):

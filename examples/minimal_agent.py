@@ -106,7 +106,9 @@ async def configured_ai(
     language_model: llm.LLM[Never]
     if reasoning_choice == "hermes":
         client = HermesRunsClient(
-            hermes_config(session_id=os.environ.get("HERMES_VOICE_SESSION_ID", ""))
+            hermes_config(
+                session_id=os.environ.get("HERMES_VOICE_SESSION_ID", "voicebox-standalone")
+            )
         )
         try:
             await client.preflight()

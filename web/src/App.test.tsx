@@ -417,7 +417,7 @@ describe('microphone, playback and lifecycle controls', () => {
     expect(button('Turn mic on').disabled).toBe(true);
   });
 
-  it('fails closed when Hermes stop is requested without terminal acknowledgement', async () => {
+  it('keeps Hermes stop failure fail-closed across reconnects until the grant ends', async () => {
     connect();
     mocks.studio.status.ai.provider = 'hermes';
     mocks.agent.state = 'speaking';
@@ -438,6 +438,21 @@ describe('microphone, playback and lifecycle controls', () => {
     expect(button('Send').disabled).toBe(true);
     expect(button('Turn mic on').disabled).toBe(true);
     expect(button('End session').disabled).toBe(false);
+
+    await act(async () => {
+      mocks.studio.connected = false;
+      mocks.studio.session.connectionState = 'disconnected';
+      render();
+    });
+    await act(async () => {
+      mocks.studio.connected = true;
+      mocks.studio.session.connectionState = 'connected';
+      render();
+    });
+
+    expect(button('Send').disabled).toBe(true);
+    expect(button('Turn mic on').disabled).toBe(true);
+    expect(host.querySelector('.session-status')?.textContent).toContain('Needs attention');
   });
 
   it('disables sending and mic during reconnect, and blocks new starts during draining', async () => {
@@ -615,6 +630,61 @@ describe('Hermes approval flow', () => {
     await resolve({ runId: approval.runId, requestId: approval.requestId });
     await receive(approval);
     expect(host.textContent).not.toContain('rm redacted-file');
+  });
+
+  it('clears grant-scoped authority state when one non-null grant directly replaces another', async () => {
+    connect();
+    mocks.studio.status.ai.provider = 'hermes';
+    mocks.agent.state = 'speaking';
+    mocks.local.localParticipant.performRpc.mockResolvedValueOnce(JSON.stringify({
+      stoppedPlayback: true,
+      hermesStopRequested: true,
+      hermesTerminalAcknowledged: false,
+      actionUndone: false,
+      backendState: 'ready',
+    }));
+    await mount();
+    await type('new grant may send this');
+    await click(button('Stop reply'));
+    await receive(approval);
+    await resolve({ runId: 'run-reused', requestId: 'request-reused' });
+    await receiveTool({
+      runId: 'run-old', eventId: 'event-reused', phase: 'started', tool: 'read_file', preview: 'old grant action',
+    });
+    expect(host.textContent).toContain('rm redacted-file');
+    expect(host.textContent).toContain('old grant action');
+    expect(host.querySelector('.session-status')?.textContent).toContain('Needs attention');
+
+    const replacement = {
+      ...testGrant,
+      sessionId: 'replacement-owner',
+      roomName: 'replacement-room',
+      agentIdentity: 'replacement-agent',
+    };
+    await act(async () => {
+      mocks.studio.grant = replacement;
+      mocks.agent.state = 'listening';
+      render();
+    });
+
+    expect(host.textContent).not.toContain('rm redacted-file');
+    expect(host.textContent).not.toContain('old grant action');
+    expect(host.querySelector('.session-status')?.textContent).not.toContain('Needs attention');
+    expect(button('Send').disabled).toBe(false);
+
+    await receive({ ...approval, runId: 'run-reused', requestId: 'request-reused', command: 'replacement command' }, replacement.agentIdentity);
+    await receiveTool({
+      runId: 'run-new', eventId: 'event-reused', phase: 'started', tool: 'write_file', preview: 'replacement grant action',
+    }, replacement.agentIdentity);
+    expect(host.textContent).toContain('replacement command');
+    expect(host.textContent).toContain('replacement grant action');
+    await click(button('Deny'));
+    expect(mocks.local.localParticipant.performRpc).toHaveBeenLastCalledWith({
+      destinationIdentity: replacement.agentIdentity,
+      method: 'hermes.approval.respond',
+      payload: JSON.stringify({ runId: 'run-reused', requestId: 'request-reused', choice: 'deny' }),
+      responseTimeout: 5_000,
+    });
   });
 
   it('keeps the displayed approval when a terminal event belongs to another run', async () => {

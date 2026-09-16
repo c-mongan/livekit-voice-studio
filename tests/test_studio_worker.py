@@ -33,6 +33,17 @@ async def test_approval_request_is_bounded_and_targeted_to_owner() -> None:
     }
 
 
+async def test_approval_request_rejects_duplicate_choices_before_publish() -> None:
+    participant = SimpleNamespace(publish_data=AsyncMock())
+    room = SimpleNamespace(local_participant=participant)
+    request = ApprovalRequest("run-1", "request-1", "bounded command", ("once", "once"))
+
+    with pytest.raises(ValueError, match="invalid"):
+        await studio_worker.publish_approval(room, "owner", request)
+
+    participant.publish_data.assert_not_awaited()
+
+
 async def test_approval_resolution_is_exact_reliable_and_targeted_to_owner() -> None:
     participant = SimpleNamespace(publish_data=AsyncMock())
     room = SimpleNamespace(local_participant=participant)

@@ -169,14 +169,12 @@ function Workspace({ studio, setMuted }: { studio: Studio; setMuted: (muted: boo
   }, [grant?.agentIdentity, session.room]);
 
   useEffect(() => {
-    if (!grant || session.connectionState === 'disconnected') {
-      setApproval(null);
-      setToolStatuses([]);
-      setUnsafeStop(false);
-      resolvedApprovals.current.clear();
-      toolEventIds.current.clear();
-    }
-  }, [grant, session.connectionState]);
+    setApproval(null);
+    setToolStatuses([]);
+    setUnsafeStop(false);
+    resolvedApprovals.current.clear();
+    toolEventIds.current.clear();
+  }, [grant?.agentIdentity, grant?.sessionId]);
 
   const respondToApproval = useCallback(async (
     request: HermesApprovalRequest,

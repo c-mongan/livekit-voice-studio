@@ -76,10 +76,11 @@ async def test_settings_are_nonsecret_and_idle_only(library_client, monkeypatch)
     client, studio = library_client
     monkeypatch.setattr(studio.library, "apply_environment", lambda: None)
     monkeypatch.setenv("OPENAI_API_KEY", "private-credential-must-not-leak")
+    monkeypatch.setenv("VOICEBOX_LLM_PROVIDER", "hermes")
     response = await client.get("/api/settings", headers=HEADERS)
     data = await response.json()
     assert response.status == 200
-    assert data["llmProvider"] == "copilot"
+    assert data["llmProvider"] == "hermes"
     assert "providers" in data
     assert "private-credential-must-not-leak" not in json.dumps(data)
     assert "apiKey" not in data

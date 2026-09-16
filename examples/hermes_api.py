@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import math
 from collections.abc import AsyncIterator, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import quote, urlsplit
 
@@ -38,7 +38,7 @@ class HermesAPIError(Exception):
 @dataclass(frozen=True)
 class HermesConfig:
     base_url: str
-    api_key: str
+    api_key: str = field(repr=False)
     profile: str | None
     session_id: str
     request_timeout: float = 120.0

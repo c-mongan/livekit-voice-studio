@@ -1,6 +1,6 @@
 # Hermes LiveKit Voice Companion Design
 
-**Status:** Approved direction; implementation not started
+**Status:** Vertical slice implemented; separate live integration gate pending
 
 **Date:** 2026-09-16
 

@@ -102,16 +102,25 @@ class StudioLibrary:
 
     def settings(self) -> dict[str, Any]:
         if not self.settings_path.exists():
-            return {
-                "sttProvider": "nemotron",
-                "llmProvider": "copilot",
-                "llmModel": "gpt-5.6-luna",
-                "reasoningEffort": "low",
-                "hermesProfile": "default",
-                "hermesBaseUrl": "http://127.0.0.1:8642",
+            legacy_provider = os.environ.get("VOICEBOX_AI_PROVIDER")
+            provider = os.environ.get("VOICEBOX_LLM_PROVIDER", legacy_provider or "hermes")
+            preset = PRESETS.get(provider)
+            if preset is None:
+                raise LibraryError("Choose Hermes, Copilot, Codex, Azure or OpenAI.")
+            settings = {
+                "sttProvider": os.environ.get(
+                    "VOICEBOX_STT_PROVIDER", legacy_provider or "nemotron"
+                ),
+                "llmProvider": provider,
+                "llmModel": preset[0],
+                "reasoningEffort": preset[1],
+                "hermesProfile": os.environ.get("HERMES_PROFILE", "default"),
+                "hermesBaseUrl": os.environ.get("HERMES_API_BASE_URL", "http://127.0.0.1:8642"),
                 "voiceId": None,
-                "codexRestrictedApproved": False,
+                "codexRestrictedApproved": os.environ.get("VOICEBOX_CODEX_RESTRICTED") == "1",
             }
+            self._validate_settings(settings)
+            return settings
         try:
             with self.settings_path.open("rb") as handle:
                 raw = handle.read(4097)

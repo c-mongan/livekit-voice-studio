@@ -63,7 +63,7 @@ def make_client(base_url: str, *, profile: str | None = None) -> HermesRunsClien
     return HermesRunsClient(HermesConfig(base_url, "test-key", profile, "voice-room-1"))
 
 
-async def test_preflight_requires_features_and_endpoints_and_sends_bearer_auth(server) -> None:
+async def test_preflight_uses_configured_key_without_displaying_it(server) -> None:
     seen: dict[str, str] = {}
 
     async def handle(request: web.Request) -> web.Response:
@@ -72,7 +72,9 @@ async def test_preflight_requires_features_and_endpoints_and_sends_bearer_auth(s
         seen["accept"] = request.headers["Accept"]
         return web.json_response(capabilities())
 
-    client = make_client(await server(handle), profile="default")
+    api_key = "actual-configured-secret"
+    config = HermesConfig(await server(handle), api_key, "default", "voice-room-1")
+    client = HermesRunsClient(config)
     try:
         await client.preflight()
     finally:
@@ -80,9 +82,11 @@ async def test_preflight_requires_features_and_endpoints_and_sends_bearer_auth(s
 
     assert seen == {
         "path": "/p/default/v1/capabilities",
-        "authorization": "Bearer test-key",
+        "authorization": f"Bearer {api_key}",
         "accept": "application/json",
     }
+    assert api_key not in repr(config)
+    assert api_key not in repr(client)
 
 
 async def test_preflight_rejects_incomplete_capabilities_without_body_details(server) -> None:

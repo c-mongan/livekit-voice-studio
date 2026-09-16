@@ -113,13 +113,15 @@ async def test_hermes_default_approval_callback_fails_closed(monkeypatch):
     monkeypatch.setenv("HERMES_API_SERVER_KEY", "server-secret")
     monkeypatch.setenv("HERMES_API_BASE_URL", "http://127.0.0.1:8642")
     monkeypatch.setenv("HERMES_PROFILE", "default")
-    monkeypatch.setenv("HERMES_VOICE_SESSION_ID", "voice-session")
+    monkeypatch.delenv("HERMES_VOICE_SESSION_ID", raising=False)
     client = SimpleNamespace(preflight=AsyncMock(), aclose=AsyncMock())
-    monkeypatch.setattr(module, "HermesRunsClient", Mock(return_value=client), raising=False)
+    client_constructor = Mock(return_value=client)
+    monkeypatch.setattr(module, "HermesRunsClient", client_constructor, raising=False)
     constructor = Mock(return_value=Mock(aclose=AsyncMock()))
     monkeypatch.setattr(module, "HermesLLM", constructor, raising=False)
 
     await module.configured_ai()
+    assert client_constructor.call_args.args[0].session_id == "voicebox-standalone"
 
     callback = constructor.call_args.kwargs["on_approval"]
     with pytest.raises(RuntimeError, match="approval"):

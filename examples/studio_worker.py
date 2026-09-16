@@ -32,6 +32,7 @@ async def publish_approval(room: rtc.Room, owner: str, request: ApprovalRequest)
         or not request.request_id
         or len(request.request_id) > _MAX_APPROVAL_ID_CHARS
         or not request.choices
+        or len(set(request.choices)) != len(request.choices)
         or any(choice not in _APPROVAL_CHOICES for choice in request.choices)
     ):
         raise ValueError("Hermes approval request is invalid.")
