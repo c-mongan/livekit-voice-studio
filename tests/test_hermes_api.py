@@ -19,10 +19,7 @@ def test_profile_routes_are_encoded_and_loopback_is_allowed() -> None:
         session_id="voice-room-1",
     )
 
-    assert (
-        config.route("/v1/runs")
-        == "http://127.0.0.1:8642/p/voice%20room%2Fprimary/v1/runs"
-    )
+    assert config.route("/v1/runs") == "http://127.0.0.1:8642/p/voice%20room%2Fprimary/v1/runs"
 
 
 def test_http_remote_origin_is_rejected() -> None:
@@ -63,9 +60,7 @@ def capabilities() -> dict[str, object]:
 
 
 def make_client(base_url: str, *, profile: str | None = None) -> HermesRunsClient:
-    return HermesRunsClient(
-        HermesConfig(base_url, "test-key", profile, "voice-room-1")
-    )
+    return HermesRunsClient(HermesConfig(base_url, "test-key", profile, "voice-room-1"))
 
 
 async def test_preflight_requires_features_and_endpoints_and_sends_bearer_auth(server) -> None:

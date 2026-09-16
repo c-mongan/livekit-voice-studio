@@ -173,9 +173,7 @@ async def test_model_close_waits_for_admission_then_stops_before_closing(
     async def delayed_start(text: str, *, idempotency_key: str) -> RunHandle:
         admission_started.set()
         await release_admission.wait()
-        client.starts.append(
-            {"text": text, "idempotency_key": idempotency_key, "run_id": "run_1"}
-        )
+        client.starts.append({"text": text, "idempotency_key": idempotency_key, "run_id": "run_1"})
         return RunHandle("run_1")
 
     async def stop(run_id: str) -> dict[str, object]:
@@ -217,9 +215,7 @@ async def test_model_close_exposes_hanging_admission_without_closing_client(
     async def hanging_start(text: str, *, idempotency_key: str) -> RunHandle:
         admission_started.set()
         await release_admission.wait()
-        client.starts.append(
-            {"text": text, "idempotency_key": idempotency_key, "run_id": "run_1"}
-        )
+        client.starts.append({"text": text, "idempotency_key": idempotency_key, "run_id": "run_1"})
         return RunHandle("run_1")
 
     client.start = hanging_start  # type: ignore[method-assign]
@@ -434,10 +430,12 @@ async def test_captured_run_stop_does_not_follow_replaced_active_state(client: F
 async def test_stop_active_discards_late_deltas_and_maps_cancelled_run_to_cancellation(
     client: FakeClient,
 ) -> None:
-    client.runs = [[
-        RunEvent("message.delta", {"run_id": "run_1", "delta": "must not be spoken"}),
-        RunEvent("run.cancelled", {"run_id": "run_1", "status": "cancelled"}),
-    ]]
+    client.runs = [
+        [
+            RunEvent("message.delta", {"run_id": "run_1", "delta": "must not be spoken"}),
+            RunEvent("run.cancelled", {"run_id": "run_1", "status": "cancelled"}),
+        ]
+    ]
     client.statuses["run_1"] = [{"status": "cancelled"}]
     gate = asyncio.Event()
     original_events = client.events
@@ -494,25 +492,32 @@ async def test_stale_run_events_and_non_text_payloads_are_never_spoken(client: F
 
 async def test_only_bounded_authoritative_tool_status_is_forwarded(client: FakeClient) -> None:
     on_tool_status = AsyncMock()
-    client.runs = [[
-        RunEvent(
-            "tool.started",
-            {"run_id": "run_1", "tool": "read_file", "preview": "fixture.txt", "args": "SECRET"},
-        ),
-        RunEvent(
-            "tool.completed",
-            {
-                "run_id": "run_1",
-                "tool": "read_file",
-                "preview": "HERMES-LIVE-FIXTURE-7F31",
-                "duration": 0.125,
-                "error": False,
-                "result": "SECRET",
-            },
-        ),
-        RunEvent("tool.failed", {"run_id": "run_1", "result": "SECRET"}),
-        RunEvent("run.completed", {"run_id": "run_1", "status": "completed"}),
-    ]]
+    client.runs = [
+        [
+            RunEvent(
+                "tool.started",
+                {
+                    "run_id": "run_1",
+                    "tool": "read_file",
+                    "preview": "fixture.txt",
+                    "args": "SECRET",
+                },
+            ),
+            RunEvent(
+                "tool.completed",
+                {
+                    "run_id": "run_1",
+                    "tool": "read_file",
+                    "preview": "HERMES-LIVE-FIXTURE-7F31",
+                    "duration": 0.125,
+                    "error": False,
+                    "result": "SECRET",
+                },
+            ),
+            RunEvent("tool.failed", {"run_id": "run_1", "result": "SECRET"}),
+            RunEvent("run.completed", {"run_id": "run_1", "status": "completed"}),
+        ]
+    ]
     model = HermesLLM(
         client=client,
         on_approval=AsyncMock(),
@@ -543,18 +548,20 @@ async def test_only_bounded_authoritative_tool_status_is_forwarded(client: FakeC
 async def test_tool_status_publication_failure_latches_adapter_uncertain(
     client: FakeClient,
 ) -> None:
-    client.runs = [[
-        RunEvent(
-            "tool.completed",
-            {
-                "run_id": "run_1",
-                "tool": "write_file",
-                "preview": "completed action",
-                "duration": 0.1,
-                "error": False,
-            },
-        )
-    ]]
+    client.runs = [
+        [
+            RunEvent(
+                "tool.completed",
+                {
+                    "run_id": "run_1",
+                    "tool": "write_file",
+                    "preview": "completed action",
+                    "duration": 0.1,
+                    "error": False,
+                },
+            )
+        ]
+    ]
     client.statuses["run_1"] = [{"status": "cancelled"}]
     model = HermesLLM(
         client=client,
@@ -612,9 +619,7 @@ async def test_approval_is_forwarded_exactly_without_becoming_speech(client: Fak
             RunEvent("run.completed", {"run_id": "run_1", "status": "completed"}),
         ]
     ]
-    model = HermesLLM(
-        client=client, on_approval=on_approval, on_approval_resolved=on_resolved
-    )
+    model = HermesLLM(client=client, on_approval=on_approval, on_approval_resolved=on_resolved)
 
     assert await collect(model.chat(chat_ctx=context(("user", "one")))) == []
     on_approval.assert_awaited_once_with(
@@ -688,9 +693,7 @@ async def test_approval_response_requires_current_exact_request_and_choice(
 
     client.events = events  # type: ignore[method-assign]
     on_resolved = AsyncMock()
-    model = HermesLLM(
-        client=client, on_approval=AsyncMock(), on_approval_resolved=on_resolved
-    )
+    model = HermesLLM(client=client, on_approval=AsyncMock(), on_approval_resolved=on_resolved)
     stream = model.chat(chat_ctx=context(("user", "one")))
     task = asyncio.create_task(collect(stream))
     await approval_seen.wait()
@@ -741,9 +744,7 @@ async def test_failed_approval_response_can_be_retried(client: FakeClient) -> No
     client.events = events  # type: ignore[method-assign]
     client.approve = approve  # type: ignore[method-assign]
     on_resolved = AsyncMock()
-    model = HermesLLM(
-        client=client, on_approval=AsyncMock(), on_approval_resolved=on_resolved
-    )
+    model = HermesLLM(client=client, on_approval=AsyncMock(), on_approval_resolved=on_resolved)
     task = asyncio.create_task(collect(model.chat(chat_ctx=context(("user", "one")))))
     await approval_seen.wait()
 
@@ -784,9 +785,7 @@ async def test_terminal_cleanup_resolves_failed_approval_once(client: FakeClient
     client.events = events  # type: ignore[method-assign]
     client.approve = failing_approve  # type: ignore[method-assign]
     on_resolved = AsyncMock()
-    model = HermesLLM(
-        client=client, on_approval=AsyncMock(), on_approval_resolved=on_resolved
-    )
+    model = HermesLLM(client=client, on_approval=AsyncMock(), on_approval_resolved=on_resolved)
     task = asyncio.create_task(collect(model.chat(chat_ctx=context(("user", "one")))))
     await approval_seen.wait()
 
@@ -830,15 +829,11 @@ async def test_simultaneous_approval_responses_reach_hermes_once(client: FakeCli
     client.events = events  # type: ignore[method-assign]
     client.approve = blocking_approve  # type: ignore[method-assign]
     on_resolved = AsyncMock()
-    model = HermesLLM(
-        client=client, on_approval=AsyncMock(), on_approval_resolved=on_resolved
-    )
+    model = HermesLLM(client=client, on_approval=AsyncMock(), on_approval_resolved=on_resolved)
     stream_task = asyncio.create_task(collect(model.chat(chat_ctx=context(("user", "one")))))
     await approval_seen.wait()
 
-    first_response = asyncio.create_task(
-        model.respond_to_approval("run_1", "req_1", "once")
-    )
+    first_response = asyncio.create_task(model.respond_to_approval("run_1", "req_1", "once"))
     await approve_started.wait()
     with pytest.raises(APIError, match="already being processed"):
         await model.respond_to_approval("run_1", "req_1", "once")

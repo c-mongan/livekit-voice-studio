@@ -90,14 +90,8 @@ async def publish_tool_status(room: rtc.Room, owner: str, status: ToolStatus) ->
         or not status.tool
         or len(status.tool) > 100
         or (status.preview is not None and len(status.preview) > 500)
-        or (
-            status.phase == "completed"
-            and (status.duration is None or status.error is None)
-        )
-        or (
-            status.phase == "started"
-            and (status.duration is not None or status.error is not None)
-        )
+        or (status.phase == "completed" and (status.duration is None or status.error is None))
+        or (status.phase == "started" and (status.duration is not None or status.error is not None))
     ):
         raise ValueError("Hermes tool status is invalid.")
     event: dict[str, object] = {
@@ -122,9 +116,7 @@ async def publish_tool_status(room: rtc.Room, owner: str, status: ToolStatus) ->
     )
 
 
-async def respond_to_approval_rpc(
-    model: HermesLLM, owner: str, data: rtc.RpcInvocationData
-) -> str:
+async def respond_to_approval_rpc(model: HermesLLM, owner: str, data: rtc.RpcInvocationData) -> str:
     """Accept only an exact, owner-issued response to a current Hermes request."""
     if data.caller_identity != owner:
         raise rtc.RpcError(1403, "Only the session owner can respond to approvals.")
@@ -395,9 +387,7 @@ async def run() -> None:
             async def approval_response(data: rtc.RpcInvocationData) -> str:
                 return await respond_to_approval_rpc(language_model, owner, data)
 
-            room.local_participant.register_rpc_method(
-                "hermes.approval.respond", approval_response
-            )
+            room.local_participant.register_rpc_method("hermes.approval.respond", approval_response)
         stage = report_startup("conversation startup")
         await session.start(
             room=room,

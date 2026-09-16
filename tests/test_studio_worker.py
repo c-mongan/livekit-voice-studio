@@ -214,13 +214,17 @@ async def test_rpc_registration_follows_connection_and_shutdown_drains(
         result, repeated = [
             json.loads(value) for value in await asyncio.gather(first, repeated_call)
         ]
-        assert result == repeated == {
-            "stoppedPlayback": True,
-            "hermesStopRequested": True,
-            "hermesTerminalAcknowledged": terminal_acknowledged,
-            "actionUndone": False,
-            "backendState": "ready",
-        }
+        assert (
+            result
+            == repeated
+            == {
+                "stoppedPlayback": True,
+                "hermesStopRequested": True,
+                "hermesTerminalAcknowledged": terminal_acknowledged,
+                "actionUndone": False,
+                "backendState": "ready",
+            }
+        )
         handlers["disconnected"](1)
         order.append("session-start")
 
@@ -328,9 +332,7 @@ async def test_rpc_registration_follows_connection_and_shutdown_drains(
     session.interrupt.assert_awaited_with(force=True)
     assert exact_stops == ["run-1"]
     model.stop_active.assert_not_awaited()
-    model.respond_to_approval.assert_awaited_once_with(
-        "run-approval", "request-approval", "deny"
-    )
+    model.respond_to_approval.assert_awaited_once_with("run-approval", "request-approval", "deny")
     assert studio_worker.AgentSession.call_args.kwargs["llm"] is model
     assert session.start.await_args.kwargs["agent"].instructions == (
         "Reply for speech: concise plain text unless detail is needed. "

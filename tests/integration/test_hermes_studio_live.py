@@ -133,8 +133,7 @@ def _retired_text_absent_after(
     marker: str,
 ) -> bool:
     return not any(
-        event.participant_identity == agent_identity
-        and marker.casefold() in event.text.casefold()
+        event.participant_identity == agent_identity and marker.casefold() in event.text.casefold()
         for event in observations.transcriptions[boundary.transcript_count :]
     )
 
@@ -149,9 +148,7 @@ def _assert_interruption_evidence(
     marker: str,
     silence_limit_seconds: float,
 ) -> float:
-    before = observations.transcriptions[
-        retired_start.transcript_count : boundary.transcript_count
-    ]
+    before = observations.transcriptions[retired_start.transcript_count : boundary.transcript_count]
     assert any(
         event.participant_identity == agent_identity
         and not event.final
@@ -546,9 +543,7 @@ async def test_continuous_hermes_room_tools_approval_interrupt_continuity_and_dr
                 "hermes_terminal_after_stop": interrupt["hermesTerminalAcknowledged"],
                 "llm_first_text_delta_seconds": studio.metrics["llmFirstTokenSeconds"],
                 "measured_qwen_turns": len(warm_ttfb),
-                "nemotron_final_transcription_seconds": studio.metrics[
-                    "transcriptionDelaySeconds"
-                ],
+                "nemotron_final_transcription_seconds": studio.metrics["transcriptionDelaySeconds"],
                 "no_retired_deltas": no_retired_deltas,
                 "qwen_first_audio_p95_seconds": round(warm_p95, 6),
                 "stop_to_silence_seconds": round(stop_to_silence, 6),

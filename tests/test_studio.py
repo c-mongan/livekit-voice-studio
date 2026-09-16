@@ -396,9 +396,7 @@ async def test_status_timeout_is_an_explicit_problem(broker, monkeypatch):
         ("https://hermes.example", False),
     ],
 )
-async def test_hermes_status_reports_control_plane_location(
-    broker, monkeypatch, base_url, local
-):
+async def test_hermes_status_reports_control_plane_location(broker, monkeypatch, base_url, local):
     monkeypatch.setenv("VOICEBOX_LLM_PROVIDER", "hermes")
     monkeypatch.setenv("HERMES_API_BASE_URL", base_url)
     monkeypatch.setenv("HERMES_PROFILE", "voice-profile")

@@ -192,7 +192,6 @@ class HermesLLM(llm.LLM[Never]):
                 pending.in_flight = False
             raise _error("Hermes approval response failed.") from None
 
-
     async def stop_active(self) -> bool:
         state = self._active
         if state is None:
@@ -268,9 +267,7 @@ class HermesLLM(llm.LLM[Never]):
 
     async def _admit(self, request_text: str, generation: int) -> _RunState:
         try:
-            handle = await self._client.start(
-                request_text, idempotency_key=uuid.uuid4().hex
-            )
+            handle = await self._client.start(request_text, idempotency_key=uuid.uuid4().hex)
         except asyncio.CancelledError:
             self._uncertain = True
             raise
@@ -378,9 +375,7 @@ class _HermesStream(llm.LLMStream):
             raise _error("Hermes reused an approval request identifier.")
         state.approval_ids.add(request_id)
         owner._pending_approvals[request_id] = _PendingApproval(state, exact_choices)
-        await owner._on_approval(
-            ApprovalRequest(state.run_id, request_id, command, exact_choices)
-        )
+        await owner._on_approval(ApprovalRequest(state.run_id, request_id, command, exact_choices))
 
     async def _forward_tool_status(self, event: RunEvent, state: _RunState) -> None:
         callback = self._owner._on_tool_status

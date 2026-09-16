@@ -151,9 +151,7 @@ class HermesRunsClient:
                 self.config.route(route),
                 json=json_body,
                 headers=self._headers(extra_headers),
-                timeout=aiohttp.ClientTimeout(
-                    total=request_timeout or self.config.request_timeout
-                ),
+                timeout=aiohttp.ClientTimeout(total=request_timeout or self.config.request_timeout),
                 allow_redirects=False,
                 auto_decompress=False,
             ) as response:
@@ -170,13 +168,9 @@ class HermesRunsClient:
         features = value.get("features")
         endpoints = value.get("endpoints")
         if not isinstance(features, dict) or not isinstance(endpoints, dict):
-            raise HermesAPIError(
-                "Hermes capabilities are incompatible with the required Runs API."
-            )
+            raise HermesAPIError("Hermes capabilities are incompatible with the required Runs API.")
         if not all(features.get(name) is True for name in _REQUIRED_FEATURES):
-            raise HermesAPIError(
-                "Hermes capabilities are incompatible with the required Runs API."
-            )
+            raise HermesAPIError("Hermes capabilities are incompatible with the required Runs API.")
         for name, (method, path) in _REQUIRED_ENDPOINTS.items():
             endpoint = endpoints.get(name)
             if (
