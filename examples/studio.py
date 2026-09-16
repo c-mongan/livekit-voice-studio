@@ -60,6 +60,41 @@ class StudioError(Exception):
         self.status = status
 
 
+def hermes_control_plane_is_local(base_url: str) -> bool:
+    hostname = urlsplit(base_url).hostname
+    if hostname == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(hostname or "").is_loopback
+    except ValueError:
+        return False
+
+
+def ai_status(reasoning_choice: str) -> dict[str, Any]:
+    if reasoning_choice == "hermes":
+        return {
+            "provider": "hermes",
+            "model": "profile-default",
+            "effort": "none",
+            "local": hermes_control_plane_is_local(
+                os.environ.get("HERMES_API_BASE_URL", "http://127.0.0.1:8642")
+            ),
+            "profile": os.environ.get("HERMES_PROFILE", "default"),
+        }
+    return {
+        "provider": reasoning_choice,
+        "model": os.environ.get("VOICEBOX_LLM_MODEL", "gpt-5.6-luna")
+        if reasoning_choice in ("copilot", "codex")
+        else os.environ.get("AZURE_OPENAI_MODEL", "gpt-4.1-nano")
+        if reasoning_choice == "azure"
+        else "gpt-4.1-mini",
+        "effort": os.environ.get("VOICEBOX_REASONING_EFFORT", "low")
+        if reasoning_choice in ("copilot", "codex")
+        else "none",
+        "local": False,
+    }
+
+
 @dataclass
 class OwnedSession:
     id: str
@@ -186,18 +221,7 @@ class Studio:
             **info,
             "ready": not info["problems"] and self.phase == "idle" and not self.closed,
             "phase": self.phase,
-            "ai": {
-                "provider": reasoning_choice,
-                "model": os.environ.get("VOICEBOX_LLM_MODEL", "gpt-5.6-luna")
-                if reasoning_choice in ("copilot", "codex")
-                else os.environ.get("AZURE_OPENAI_MODEL", "gpt-4.1-nano")
-                if reasoning_choice == "azure"
-                else "gpt-4.1-mini",
-                "effort": os.environ.get("VOICEBOX_REASONING_EFFORT", "low")
-                if reasoning_choice in ("copilot", "codex")
-                else "none",
-                "local": False,
-            },
+            "ai": ai_status(reasoning_choice),
             "stt": {
                 "provider": speech_choice,
                 "model": "nemotron-speech-streaming-en-0.6b"
@@ -457,8 +481,10 @@ class Studio:
             )
             self.lease.mark_active()
             self.current = owned
-            env = dict(
-                os.environ,
+            # Do not leak ambient Hermes configuration into the worker. The
+            # selected control-plane values are the complete per-room contract.
+            env = {key: value for key, value in os.environ.items() if not key.startswith("HERMES_")}
+            env.update(
                 STUDIO_ROOM=owned.room,
                 STUDIO_PARTICIPANT_IDENTITY=owned.participant,
                 STUDIO_AGENT_IDENTITY=owned.agent,
@@ -467,6 +493,15 @@ class Studio:
                 LK_DUMP_TTS="0",
                 PYTHONUNBUFFERED="1",
             )
+            if provider_choices()[1] == "hermes":
+                env.update(
+                    HERMES_PROFILE=os.environ.get("HERMES_PROFILE", "default"),
+                    HERMES_API_BASE_URL=os.environ.get(
+                        "HERMES_API_BASE_URL", "http://127.0.0.1:8642"
+                    ),
+                    HERMES_VOICE_SESSION_ID=f"voice:{owned.room}",
+                    HERMES_API_SERVER_KEY=os.environ["HERMES_API_SERVER_KEY"],
+                )
             owned.process = await asyncio.create_subprocess_exec(
                 sys.executable,
                 "-m",
@@ -961,6 +996,12 @@ def provider_options() -> dict[str, list[dict[str, Any]]]:
             ),
         ],
         "llm": [
+            option(
+                "hermes",
+                "Hermes · tools, memory and approvals",
+                bool(os.environ.get("HERMES_API_SERVER_KEY", "").strip()),
+                "Set HERMES_API_SERVER_KEY on the local Studio server.",
+            ),
             option(
                 "copilot",
                 "Copilot · Luna low",

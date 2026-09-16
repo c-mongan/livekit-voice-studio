@@ -15,6 +15,7 @@ import numpy as np
 import soundfile as sf
 from livekit.plugins.voicebox.errors import ConfigurationError
 
+from examples.hermes_api import HermesConfig
 from examples.voice_bundle import load_bundle, save_bundle
 
 MAX_RECORDING_BYTES = 4 * 1024 * 1024
@@ -24,6 +25,7 @@ GUIDED_TEXT = (
     "speak with a voice like mine."
 )
 PRESETS = {
+    "hermes": ("profile-default", "none"),
     "copilot": ("gpt-5.6-luna", "low"),
     "codex": ("gpt-5.6-luna", "low"),
     "azure": ("gpt-4.1-nano", "none"),
@@ -100,14 +102,25 @@ class StudioLibrary:
 
     def settings(self) -> dict[str, Any]:
         if not self.settings_path.exists():
-            return {
-                "sttProvider": "nemotron",
-                "llmProvider": "copilot",
-                "llmModel": "gpt-5.6-luna",
-                "reasoningEffort": "low",
+            legacy_provider = os.environ.get("VOICEBOX_AI_PROVIDER")
+            provider = os.environ.get("VOICEBOX_LLM_PROVIDER", legacy_provider or "hermes")
+            preset = PRESETS.get(provider)
+            if preset is None:
+                raise LibraryError("Choose Hermes, Copilot, Codex, Azure or OpenAI.")
+            settings = {
+                "sttProvider": os.environ.get(
+                    "VOICEBOX_STT_PROVIDER", legacy_provider or "nemotron"
+                ),
+                "llmProvider": provider,
+                "llmModel": preset[0],
+                "reasoningEffort": preset[1],
+                "hermesProfile": os.environ.get("HERMES_PROFILE", "default"),
+                "hermesBaseUrl": os.environ.get("HERMES_API_BASE_URL", "http://127.0.0.1:8642"),
                 "voiceId": None,
-                "codexRestrictedApproved": False,
+                "codexRestrictedApproved": os.environ.get("VOICEBOX_CODEX_RESTRICTED") == "1",
             }
+            self._validate_settings(settings)
+            return settings
         try:
             with self.settings_path.open("rb") as handle:
                 raw = handle.read(4097)
@@ -116,6 +129,8 @@ class StudioLibrary:
             data = json.loads(raw)
             if isinstance(data, dict):
                 data.setdefault("codexRestrictedApproved", False)
+                data.setdefault("hermesProfile", "default")
+                data.setdefault("hermesBaseUrl", "http://127.0.0.1:8642")
             self._validate_settings(data)
             return dict(data)
         except (OSError, ValueError, TypeError, LibraryError):
@@ -129,6 +144,8 @@ class StudioLibrary:
             "llmProvider",
             "llmModel",
             "reasoningEffort",
+            "hermesProfile",
+            "hermesBaseUrl",
             "voiceId",
             "codexRestrictedApproved",
         }
@@ -138,9 +155,35 @@ class StudioLibrary:
             raise LibraryError("Choose a supported speech recognition provider.")
         provider = settings["llmProvider"]
         if not isinstance(provider, str) or provider not in PRESETS:
-            raise LibraryError("Choose Copilot, Codex, Azure or OpenAI.")
+            raise LibraryError("Choose Hermes, Copilot, Codex, Azure or OpenAI.")
         if (settings["llmModel"], settings["reasoningEffort"]) != PRESETS[provider]:
+            if provider == "hermes":
+                raise LibraryError("Hermes profile reasoning uses its fixed Studio preset.")
             raise LibraryError("The selected model and reasoning preset is not supported.")
+        profile = settings["hermesProfile"]
+        if not isinstance(profile, str) or not re.fullmatch(
+            r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", profile
+        ):
+            raise LibraryError(
+                "Hermes profile must use 1–64 letters, numbers, underscores or dashes."
+            )
+        base_url = settings["hermesBaseUrl"]
+        if not isinstance(base_url, str):
+            raise LibraryError("Hermes base URL must be a loopback HTTP or explicit HTTPS origin.")
+        try:
+            HermesConfig(
+                base_url=base_url,
+                api_key="settings-validation",
+                profile=profile,
+                session_id="settings-validation",
+            )
+        except ValueError as error:
+            message = str(error)
+            if "HTTPS" in message:
+                raise LibraryError("Remote Hermes origins require HTTPS.") from None
+            raise LibraryError(
+                "Hermes base URL must be a loopback HTTP or explicit HTTPS origin."
+            ) from None
         if type(settings["codexRestrictedApproved"]) is not bool:
             raise LibraryError("Restricted agent consent must be a boolean.")
         if provider == "codex" and not settings["codexRestrictedApproved"]:
@@ -263,6 +306,8 @@ class StudioLibrary:
         os.environ["VOICEBOX_LLM_PROVIDER"] = settings["llmProvider"]
         os.environ["VOICEBOX_LLM_MODEL"] = settings["llmModel"]
         os.environ["VOICEBOX_REASONING_EFFORT"] = settings["reasoningEffort"]
+        os.environ["HERMES_PROFILE"] = settings["hermesProfile"]
+        os.environ["HERMES_API_BASE_URL"] = settings["hermesBaseUrl"]
         os.environ["VOICEBOX_CODEX_RESTRICTED"] = (
             "1" if settings["codexRestrictedApproved"] else "0"
         )

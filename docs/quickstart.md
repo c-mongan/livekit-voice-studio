@@ -74,21 +74,26 @@ returned by the preceding setup steps):
 | `VOICEBOX_STT_PROVIDER` | `nemotron` |
 | `NEMOTRON_SERVER_BINARY` | Absolute path ending in `build/bin/nemo-speech` |
 | `NEMOTRON_MODEL_PATH` | Absolute path to the verified `.gguf` model |
-| `VOICEBOX_LLM_PROVIDER` | `copilot` |
+| `VOICEBOX_LLM_PROVIDER` | `hermes` |
+| `HERMES_API_BASE_URL` | The loopback HTTP or remote HTTPS Hermes Runs API origin |
+| `HERMES_API_SERVER_KEY` | The Hermes server key; keep it only in the private `.env` |
+| `HERMES_PROFILE` | The configured Hermes profile, such as `default` |
 | `VOICEBOX_EXCLUSIVE` | `1`, after stopping competing generation jobs |
 
 Leave `VOICEBOX_VOICE_BUNDLE` empty until you record and select a voice in the
 app. Selecting it saves the choice in the private local library. No external
 Voicebox server is required for this path. Do not run `.env` as a shell script.
 
-For conversations, add a LiveKit project's URL, API key and secret. Install and
-sign in to Copilot CLI, then verify your account offers Luna with low reasoning.
-The [agent-provider guide](agent-providers.md) covers supported versions and
-restrictions. Azure or OpenAI can be configured instead; there is no automatic
-fallback. Codex requires separate restricted-agent consent.
-The preset was tested with the installed account/runtime combination, not every
-subscription. If your account lacks it, choose a supported configured Azure or
-OpenAI option rather than assuming the preset is universally available.
+For conversations, add a LiveKit project's URL, API key and secret, plus the
+Hermes values above. Hermes must advertise run submission, SSE events, status,
+approval-response and stop capabilities. A fresh Studio library uses the split
+provider settings from `.env`; once Studio settings have been saved, those
+settings remain authoritative and must be changed in the app rather than being
+silently replaced at startup.
+
+The [agent-provider guide](agent-providers.md) covers supported providers and
+restrictions. Copilot, Codex, Azure or OpenAI can be selected instead; there is
+no automatic fallback. Codex requires separate restricted-agent consent.
 
 Voice recording and local generated auditions do not need cloud credentials.
 Conversations do: local speech does not make remote reasoning or LiveKit offline.

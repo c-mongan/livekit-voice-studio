@@ -15,8 +15,139 @@ from livekit.agents.metrics import EOUMetrics, LLMMetrics, TTSMetrics
 from livekit.plugins import voicebox
 
 from examples.fast_qwen import FastQwenTTS
+from examples.hermes_llm import ApprovalRequest, ApprovalResolution, HermesLLM, ToolStatus
 from examples.minimal_agent import configured_ai, configured_provider, provider_choices
 from examples.startup_progress import STARTUP_MESSAGES
+
+_APPROVAL_CHOICES = frozenset({"once", "session", "always", "deny"})
+_MAX_APPROVAL_PAYLOAD_BYTES = 4096
+_MAX_APPROVAL_ID_CHARS = 200
+
+
+async def publish_approval(room: rtc.Room, owner: str, request: ApprovalRequest) -> None:
+    """Publish a bounded, redacted approval request only to its owning participant."""
+    if (
+        not request.run_id
+        or len(request.run_id) > _MAX_APPROVAL_ID_CHARS
+        or not request.request_id
+        or len(request.request_id) > _MAX_APPROVAL_ID_CHARS
+        or not request.choices
+        or len(set(request.choices)) != len(request.choices)
+        or any(choice not in _APPROVAL_CHOICES for choice in request.choices)
+    ):
+        raise ValueError("Hermes approval request is invalid.")
+    payload = json.dumps(
+        {
+            "runId": request.run_id,
+            "requestId": request.request_id,
+            "command": request.command[:500],
+            "choices": list(request.choices),
+        },
+        separators=(",", ":"),
+    )
+    if len(payload.encode("utf-8")) > _MAX_APPROVAL_PAYLOAD_BYTES:
+        raise ValueError("Hermes approval request exceeds the transport limit.")
+    await room.local_participant.publish_data(
+        payload,
+        reliable=True,
+        destination_identities=[owner],
+        topic="hermes.approval.request",
+    )
+
+
+async def publish_approval_resolution(
+    room: rtc.Room, owner: str, resolution: ApprovalResolution
+) -> None:
+    """Publish one exact approval resolution only to its owning participant."""
+    if (
+        not resolution.run_id
+        or len(resolution.run_id) > _MAX_APPROVAL_ID_CHARS
+        or not resolution.request_id
+        or len(resolution.request_id) > _MAX_APPROVAL_ID_CHARS
+    ):
+        raise ValueError("Hermes approval resolution is invalid.")
+    payload = json.dumps(
+        {"runId": resolution.run_id, "requestId": resolution.request_id},
+        separators=(",", ":"),
+    )
+    if len(payload.encode("utf-8")) > _MAX_APPROVAL_PAYLOAD_BYTES:
+        raise ValueError("Hermes approval resolution exceeds the transport limit.")
+    await room.local_participant.publish_data(
+        payload,
+        reliable=True,
+        destination_identities=[owner],
+        topic="hermes.approval.resolved",
+    )
+
+
+async def publish_tool_status(room: rtc.Room, owner: str, status: ToolStatus) -> None:
+    """Publish only Hermes' bounded status projection, never tool arguments or raw results."""
+    if (
+        not status.run_id
+        or len(status.run_id) > _MAX_APPROVAL_ID_CHARS
+        or not status.event_id
+        or len(status.event_id) > 220
+        or status.phase not in {"started", "completed"}
+        or not status.tool
+        or len(status.tool) > 100
+        or (status.preview is not None and len(status.preview) > 500)
+        or (status.phase == "completed" and (status.duration is None or status.error is None))
+        or (status.phase == "started" and (status.duration is not None or status.error is not None))
+    ):
+        raise ValueError("Hermes tool status is invalid.")
+    event: dict[str, object] = {
+        "runId": status.run_id,
+        "eventId": status.event_id,
+        "phase": status.phase,
+        "tool": status.tool,
+    }
+    if status.preview is not None:
+        event["preview"] = status.preview
+    if status.phase == "completed":
+        event["duration"] = status.duration
+        event["error"] = status.error
+    payload = json.dumps(event, separators=(",", ":"))
+    if len(payload.encode("utf-8")) > _MAX_APPROVAL_PAYLOAD_BYTES:
+        raise ValueError("Hermes tool status exceeds the transport limit.")
+    await room.local_participant.publish_data(
+        payload,
+        reliable=True,
+        destination_identities=[owner],
+        topic="hermes.tool.status",
+    )
+
+
+async def respond_to_approval_rpc(model: HermesLLM, owner: str, data: rtc.RpcInvocationData) -> str:
+    """Accept only an exact, owner-issued response to a current Hermes request."""
+    if data.caller_identity != owner:
+        raise rtc.RpcError(1403, "Only the session owner can respond to approvals.")
+    if len(data.payload.encode("utf-8")) > _MAX_APPROVAL_PAYLOAD_BYTES:
+        raise rtc.RpcError(1400, "Invalid approval response.")
+    try:
+        payload = json.loads(data.payload)
+    except (json.JSONDecodeError, UnicodeError):
+        raise rtc.RpcError(1400, "Invalid approval response.") from None
+    if not isinstance(payload, dict) or set(payload) != {"runId", "requestId", "choice"}:
+        raise rtc.RpcError(1400, "Invalid approval response.")
+    run_id = payload["runId"]
+    request_id = payload["requestId"]
+    choice = payload["choice"]
+    if (
+        not isinstance(run_id, str)
+        or not run_id
+        or len(run_id) > _MAX_APPROVAL_ID_CHARS
+        or not isinstance(request_id, str)
+        or not request_id
+        or len(request_id) > _MAX_APPROVAL_ID_CHARS
+        or not isinstance(choice, str)
+        or choice not in _APPROVAL_CHOICES
+    ):
+        raise rtc.RpcError(1400, "Invalid approval response.")
+    try:
+        await model.respond_to_approval(run_id, request_id, choice)
+    except Exception:
+        raise rtc.RpcError(1409, "The approval request is not current.") from None
+    return json.dumps({"accepted": True})
 
 
 def report(event: str, **values: Any) -> None:
@@ -50,6 +181,9 @@ async def run() -> None:
     safe = True
     stage = report_startup("voice provider configuration")
     owner = os.environ["STUDIO_PARTICIPANT_IDENTITY"]
+    interrupted_run_id: str | None = None
+    interrupted_stop_task: asyncio.Task[bool] | None = None
+    interrupt_lock = asyncio.Lock()
 
     async def watch_parent() -> None:
         parent_pid = os.getppid()
@@ -94,7 +228,21 @@ async def run() -> None:
         if not readiness.downloaded or (not fast and not readiness.loaded):
             raise RuntimeError("The selected model must already be cached and loaded.")
         stage = report_startup("speech and language configuration")
-        speech, language_model = await configured_ai()
+
+        async def approval(request: ApprovalRequest) -> None:
+            await publish_approval(room, owner, request)
+
+        async def approval_resolved(resolution: ApprovalResolution) -> None:
+            await publish_approval_resolution(room, owner, resolution)
+
+        async def tool_status(status: ToolStatus) -> None:
+            await publish_tool_status(room, owner, status)
+
+        speech, language_model = await configured_ai(
+            on_approval=approval,
+            on_approval_resolved=approval_resolved,
+            on_tool_status=tool_status,
+        )
         if provider_choices()[1] in ("copilot", "codex"):
             from examples.agent_llm import AgentLLM
 
@@ -184,12 +332,38 @@ async def run() -> None:
                     speech.commit_utterance()
 
         async def interrupt(data: rtc.RpcInvocationData) -> str:
+            nonlocal interrupted_run_id, interrupted_stop_task
             if data.caller_identity != owner:
                 raise rtc.RpcError(1403, "Only the session owner can stop this reply.")
             if session is None or provider is None:
                 raise rtc.RpcError(1503, "The conversation is not ready.")
-            await session.interrupt(force=True)
-            return json.dumps({"stopped": True, "backendState": provider.backend_state})
+            hermes_model = language_model if isinstance(language_model, HermesLLM) else None
+            hermes_run = hermes_model.capture_active_run() if hermes_model is not None else None
+            playback_stop = asyncio.ensure_future(session.interrupt(force=True))
+            hermes_stop: asyncio.Task[bool] | None = None
+            if hermes_run is not None and hermes_model is not None:
+                async with interrupt_lock:
+                    if interrupted_run_id != hermes_run.run_id:
+                        interrupted_run_id = hermes_run.run_id
+                        interrupted_stop_task = asyncio.create_task(
+                            hermes_model.stop_run(hermes_run)
+                        )
+                    hermes_stop = interrupted_stop_task
+            terminal_acknowledged = False
+            try:
+                await playback_stop
+            finally:
+                if hermes_stop is not None:
+                    terminal_acknowledged = await hermes_stop
+            return json.dumps(
+                {
+                    "stoppedPlayback": True,
+                    "hermesStopRequested": hermes_run is not None,
+                    "hermesTerminalAcknowledged": terminal_acknowledged,
+                    "actionUndone": False,
+                    "backendState": provider.backend_state,
+                }
+            )
 
         token = (
             api.AccessToken()
@@ -209,6 +383,12 @@ async def run() -> None:
         stage = report_startup("LiveKit agent connection")
         await room.connect(os.environ["LIVEKIT_URL"], token)
         room.local_participant.register_rpc_method("voicebox.interrupt", interrupt)
+        if isinstance(language_model, HermesLLM):
+
+            async def approval_response(data: rtc.RpcInvocationData) -> str:
+                return await respond_to_approval_rpc(language_model, owner, data)
+
+            room.local_participant.register_rpc_method("hermes.approval.respond", approval_response)
         stage = report_startup("conversation startup")
         await session.start(
             room=room,
@@ -219,17 +399,9 @@ async def run() -> None:
             ),
             agent=Agent(
                 instructions=(
-                    "You are a helpful conversational assistant, not a coding agent. "
-                    "Use one or two short sentences in plain text, usually under 40 words. "
-                    "Respond to the latest point instead of repeating greetings "
-                    "or stock acknowledgements. "
-                    "For casual chat, offer one relevant thought or gentle follow-up when useful; "
-                    "do not ask a question every turn. A brief okay or thanks is not necessarily "
-                    "a goodbye; only close the conversation when the user clearly ends it. "
-                    "If interrupted, follow the user’s new direction "
-                    "without finishing the old reply. "
-                    "Do not use markdown or lists unless asked. Do not claim actions or access "
-                    "to files or tools you do not have. Your speech is synthetic."
+                    "Reply for speech: concise plain text unless detail is needed. "
+                    "Hermes owns tools, memory, and approvals. Never claim an action was undone "
+                    "because playback stopped."
                 )
             ),
         )

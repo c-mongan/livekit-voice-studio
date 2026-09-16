@@ -1,3 +1,130 @@
+export interface HermesApprovalRequest {
+  runId: string;
+  requestId: string;
+  command: string;
+  choices: HermesApprovalChoice[];
+}
+
+export type HermesApprovalChoice = 'once' | 'session' | 'always' | 'deny';
+const HERMES_APPROVAL_CHOICES = new Set<HermesApprovalChoice>(['once', 'session', 'always', 'deny']);
+
+export interface HermesApprovalResolution {
+  runId: string;
+  requestId: string;
+}
+
+export interface HermesToolStatus {
+  runId: string;
+  eventId: string;
+  phase: 'started' | 'completed';
+  tool: string;
+  preview?: string;
+  duration?: number;
+  error?: boolean;
+}
+
+export function parseHermesApprovalRequest(payload: Uint8Array): HermesApprovalRequest | null {
+  if (payload.byteLength > 4096) return null;
+  let value: unknown;
+  try {
+    value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(payload));
+  } catch {
+    return null;
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (
+    Object.keys(record).length !== 4
+    || !Object.hasOwn(record, 'runId')
+    || !Object.hasOwn(record, 'requestId')
+    || !Object.hasOwn(record, 'command')
+    || !Object.hasOwn(record, 'choices')
+    || typeof record.runId !== 'string'
+    || !record.runId
+    || record.runId.length > 200
+    || typeof record.requestId !== 'string'
+    || !record.requestId
+    || record.requestId.length > 200
+    || typeof record.command !== 'string'
+    || record.command.length > 500
+    || !Array.isArray(record.choices)
+    || record.choices.length < 1
+    || record.choices.length > 4
+    || record.choices.some((choice) => typeof choice !== 'string' || !HERMES_APPROVAL_CHOICES.has(choice as HermesApprovalChoice))
+    || new Set(record.choices).size !== record.choices.length
+  ) return null;
+  return record as unknown as HermesApprovalRequest;
+}
+
+export function parseHermesApprovalResolution(payload: Uint8Array): HermesApprovalResolution | null {
+  if (payload.byteLength > 4096) return null;
+  let value: unknown;
+  try {
+    value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(payload));
+  } catch {
+    return null;
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (
+    Object.keys(record).length !== 2
+    || !Object.hasOwn(record, 'runId')
+    || !Object.hasOwn(record, 'requestId')
+    || typeof record.runId !== 'string'
+    || !record.runId
+    || record.runId.length > 200
+    || typeof record.requestId !== 'string'
+    || !record.requestId
+    || record.requestId.length > 200
+  ) return null;
+  return record as unknown as HermesApprovalResolution;
+}
+
+export function parseHermesToolStatus(payload: Uint8Array): HermesToolStatus | null {
+  if (payload.byteLength > 4096) return null;
+  let value: unknown;
+  try {
+    value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(payload));
+  } catch {
+    return null;
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  const phase = record.phase;
+  const keys = Object.keys(record);
+  const allowed = phase === 'started'
+    ? new Set(['runId', 'eventId', 'phase', 'tool', 'preview'])
+    : new Set(['runId', 'eventId', 'phase', 'tool', 'preview', 'duration', 'error']);
+  if (
+    (phase !== 'started' && phase !== 'completed')
+    || keys.some((key) => !allowed.has(key))
+    || !Object.hasOwn(record, 'runId')
+    || !Object.hasOwn(record, 'eventId')
+    || !Object.hasOwn(record, 'tool')
+    || typeof record.runId !== 'string'
+    || !record.runId
+    || record.runId.length > 200
+    || typeof record.eventId !== 'string'
+    || !record.eventId
+    || record.eventId.length > 220
+    || typeof record.tool !== 'string'
+    || !record.tool
+    || record.tool.length > 100
+    || (Object.hasOwn(record, 'preview') && (typeof record.preview !== 'string' || record.preview.length > 500))
+    || (phase === 'started' && (Object.hasOwn(record, 'duration') || Object.hasOwn(record, 'error')))
+    || (phase === 'completed' && (
+      !Object.hasOwn(record, 'duration')
+      || typeof record.duration !== 'number'
+      || !Number.isFinite(record.duration)
+      || record.duration < 0
+      || record.duration > 86_400
+      || !Object.hasOwn(record, 'error')
+      || typeof record.error !== 'boolean'
+    ))
+  ) return null;
+  return record as unknown as HermesToolStatus;
+}
+
 export interface StudioStatus {
   ready: boolean;
   phase: 'idle' | 'starting' | 'active' | 'draining' | 'blocked';
@@ -13,7 +140,7 @@ export interface StudioStatus {
     source?: 'voicebox' | 'local-bundle';
   };
   stt?: { provider: 'nemotron' | 'azure' | 'openai'; model: string; local: boolean };
-  ai: { provider: 'azure' | 'openai' | 'copilot' | 'codex'; model: string; effort?: string; local?: false };
+  ai: { provider: 'hermes' | 'azure' | 'openai' | 'copilot' | 'codex'; model: string; effort?: string; local?: boolean; profile?: string };
   livekit: { configured: boolean };
   session: { id: string; roomName: string } | null;
   metrics: {
@@ -57,6 +184,8 @@ export interface StudioConfig {
   llmProvider: string;
   llmModel: string;
   reasoningEffort: string;
+  hermesProfile: string;
+  hermesBaseUrl: string;
   codexRestrictedApproved?: boolean;
   voiceId: string | null;
   providers: { stt: ProviderOption[]; llm: ProviderOption[] };

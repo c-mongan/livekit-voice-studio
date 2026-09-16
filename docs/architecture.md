@@ -13,22 +13,38 @@ flowchart LR
     S[Local Studio: tokens and session ownership]
     L[LiveKit: real-time room]
     A[Local agent: conversation]
-    STT[Azure Speech: audio to text]
-    LLM[Azure OpenAI: response text]
-    V[Local voice: Voicebox WAV or Qwen streaming]
+    STT[Local Nemotron: English speech to text]
+    H[Hermes /v1/runs: reasoning, tools, memory, approvals]
+    V[Local Qwen: streamed speech]
     B -->|start / end| S
     S -->|create room and launch one agent| A
     S -->|short-lived room token| B
     B <-->|audio and text| L
     L <--> A
     A --> STT --> A
-    A --> LLM --> A
+    A -->|final text + stable session ID| H
+    H -->|SSE reply text, approval and status events| A
     A --> V --> A
 ```
 
 LiveKit gives the app reliable browser media, room permissions, transcripts and
-conversation hooks. Voicebox is replaceable independently of the LLM or browser.
+conversation hooks. Hermes is the recommended reasoning path and remains the sole
+owner of tools, memory, durable sessions, permissions, and action state. Copilot,
+Codex, Azure OpenAI, and OpenAI remain legacy alternatives until a separate
+deprecation decision. Voicebox is replaceable independently of the LLM or browser.
 The local server does not proxy audio, store recordings, or implement WebRTC.
+
+The Hermes adapter requires `GET /v1/capabilities`, `POST /v1/runs`, streamed
+`GET /v1/runs/{run_id}/events`, `GET /v1/runs/{run_id}` status, and the approval
+and stop routes under that run. A Studio room uses one stable Hermes session ID
+and a unique idempotency key per utterance. Missing runs, SSE, status, approval,
+or stop capability fails startup rather than silently changing provider.
+
+“Local speech” means Nemotron recognition and Qwen synthesis run on the Mac. It
+does not mean fully offline: LiveKit transports room audio and Hermes routes text
+to its configured model. Current local support is Apple Silicon and English-only.
+No model weights or recordings are bundled. LiveKit Expressive Mode is a planned,
+explicit cloud-TTS option, not a shipped Qwen feature.
 
 ## Optional fast local voice
 
@@ -44,6 +60,16 @@ closing the room releases it. The producer thread owns its inference lease,
 with a four-chunk bounded bridge and cooperative stop checks. Consumer
 cancellation suppresses output immediately without claiming the thread has exited.
 Unknown thread completion still blocks further work.
+
+For Hermes, interruption immediately stops playback and sends one stop request for
+the captured run. Retired text deltas are discarded while the adapter waits for a
+terminal status. This is **speech stopped**, not **action undone**: a tool may have
+completed before cancellation. Completed actions remain visible and are never
+rewritten to match what the listener heard.
+
+Hermes approval requests are targeted only to the room owner. Initial releases
+accept approval or denial only through the browser's click/tap card and exact
+owner-checked RPC; spoken words never approve an action.
 
 The provider declares `streaming=False` for LiveKit's **text-input** contract.
 Streaming **audio output** does not mean it accepts token-by-token text.

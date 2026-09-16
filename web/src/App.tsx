@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type FormEvent } from 'react';
 import { StartAudio, useLocalParticipant, useMultibandTrackVolume, useSessionMessages } from '@livekit/components-react';
+import { RoomEvent, type RemoteParticipant } from 'livekit-client';
 import { AgentSessionProvider } from './components/agent-session-provider';
-import { measuredSeconds, safeMessage, type StudioStatus } from './api';
+import { parseHermesApprovalRequest, parseHermesApprovalResolution, parseHermesToolStatus, measuredSeconds, safeMessage, type HermesApprovalChoice, type HermesApprovalRequest, type HermesToolStatus, type StudioStatus } from './api';
+import { HermesApproval } from './HermesApproval';
 import { MAX_MESSAGE_LENGTH, mergeTranscript, validMessage, workspaceState, type TranscriptMessage, type WorkspaceState } from './state';
 import { useStudio } from './useStudio';
 import { useStudioAgent } from './useStudioAgent';
@@ -26,16 +28,21 @@ function Icon({ name, className = '' }: { name: 'mic' | 'send' | 'stop' | 'close
 }
 
 function Pipeline({ status, online }: { status: StudioStatus | null; online: boolean }) {
-  const provider = { azure: 'Azure', openai: 'OpenAI', copilot: 'Copilot', codex: 'Codex' }[status?.ai.provider || 'azure'];
+  const provider = { hermes: 'Hermes', azure: 'Azure', openai: 'OpenAI', copilot: 'Copilot', codex: 'Codex' }[status?.ai.provider || 'azure'];
   const speechProvider = status?.stt ? { nemotron: 'Nemotron', azure: 'Azure Speech', openai: 'OpenAI' }[status.stt.provider] : 'Azure Speech';
   const mlx = status?.voice.backend === 'mlx';
   const streaming = mlx && status?.voice.streaming === true;
+  const hermes = status?.ai.provider === 'hermes';
+  const reasoningRoute = hermes ? `${status.ai.local ? 'Local' : 'Remote'} Hermes control plane` : 'Remote model';
+  const reasoningDescription = hermes
+    ? `Hermes uses a ${status.ai.local ? 'local' : 'remote'} control plane. Hermes controls model routing, tools, memory, and approvals.`
+    : `${provider} generates the response using a remote model.`;
   return <aside className="inspector" aria-label="Pipeline inspector">
     <div className="inspector-title"><h2>Your pipeline</h2><span className="local-label">Local agent</span></div>
     <p className="inspector-intro">Three stages. One conversation.</p>
     <ol className="pipeline">
       <li><span className="stage-number">1</span><div><h3>Listen</h3><p>{speechProvider}</p><span>Speech → text · {status?.stt?.local ? 'Local' : 'Cloud'}</span></div></li>
-      <li><span className="stage-number">2</span><div><h3>Reason</h3><p>{provider} · {status?.ai.model || 'Model not reported'}</p><span>Text → response · Remote model{status?.ai.effort && status.ai.effort !== 'none' ? ` · ${status.ai.effort} effort` : ''}</span></div></li>
+      <li><span className="stage-number">2</span><div><h3>Reason</h3><p>{provider} · {status?.ai.model || 'Model not reported'}</p><span>Text → response · {reasoningRoute}{status?.ai.effort && status.ai.effort !== 'none' ? ` · ${status.ai.effort} effort` : ''}</span></div></li>
       <li><span className="stage-number">3</span><div><h3>Speak</h3><p>{streaming ? 'Qwen · local streaming' : mlx ? 'Qwen · on this machine' : 'Voicebox · on this machine'}</p><span>Response → generated audio</span></div></li>
     </ol>
     <section className="inspector-section">
@@ -62,7 +69,7 @@ function Pipeline({ status, online }: { status: StudioStatus | null; online: boo
       <summary>How it works</summary>
       <div className="about-body">
         <p>LiveKit carries microphone audio, text, and replies between this browser and your local agent.</p>
-        <p>{speechProvider} transcribes speech {status?.stt?.local ? 'on this machine' : 'in the cloud'}. {provider} generates the response using a remote model. {streaming ? 'Qwen streams PCM audio locally. Voice conditioning is cached for reuse after it is prepared.' : mlx ? 'Qwen generates audio locally. The worker has not reported PCM streaming.' : 'Voicebox synthesizes complete WAV audio locally before playback is forwarded through LiveKit.'}</p>
+        <p>{speechProvider} transcribes speech {status?.stt?.local ? 'on this machine' : 'in the cloud'}. {reasoningDescription} {streaming ? 'Qwen streams PCM audio locally. Voice conditioning is cached for reuse after it is prepared.' : mlx ? 'Qwen generates audio locally. The worker has not reported PCM streaming.' : 'Voicebox synthesizes complete WAV audio locally before playback is forwarded through LiveKit.'}</p>
         <p>{streaming ? 'This streams generated audio, not text tokens. The agent still sends sentence-sized text for speech synthesis. The local model and selected voice normally prepare at session start, which can take several seconds.' : mlx ? 'The local model and selected voice normally prepare at session start. Readiness and timings here come from the local worker.' : 'This is not a realtime audio-generation model. A pause while a WAV is generated is expected.'}</p>
         <p>Typed messages skip speech recognition. Text history stays in this page’s memory. Conversation audio is not recorded here; voice enrollment saves only explicitly approved references to your local server.</p>
         {status?.voice.source === 'local-bundle' && <p>Your selected reference is read from a private local bundle. Voicebox can stay closed. The reference is not uploaded to LiveKit or the LLM.</p>}
@@ -85,9 +92,13 @@ function Workspace({ studio, setMuted }: { studio: Studio; setMuted: (muted: boo
   const [sending, setSending] = useState(false);
   const [micBusy, setMicBusy] = useState(false);
   const [interrupting, setInterrupting] = useState(false);
-  const [awaitingSilence, setAwaitingSilence] = useState(false);
   const [messages, setMessages] = useState<TranscriptMessage[]>([]);
   const [announcement, setAnnouncement] = useState('');
+  const [approval, setApproval] = useState<HermesApprovalRequest | null>(null);
+  const [toolStatuses, setToolStatuses] = useState<HermesToolStatus[]>([]);
+  const [unsafeStop, setUnsafeStop] = useState(false);
+  const resolvedApprovals = useRef(new Set<string>());
+  const toolEventIds = useRef(new Set<string>());
   const cleared = useRef(new Set<string>());
   const sendingRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -101,14 +112,92 @@ function Workspace({ studio, setMuted }: { studio: Studio; setMuted: (muted: boo
     return () => query.removeEventListener('change', update);
   }, []);
 
-  const state = workspaceState({ status, online, starting, ending, owned: !!grant, connection: session.connectionState, agent: agent.state, mic: micEnabled });
+  const state = unsafeStop ? 'blocked' : workspaceState({ status, online, starting, ending, owned: !!grant, connection: session.connectionState, agent: agent.state, mic: micEnabled });
   const sourceTrack = agent.state === 'speaking' ? agent.microphoneTrack : micEnabled ? session.local.microphoneTrack : undefined;
   const bands = useMultibandTrackVolume(reducedMotion ? undefined : sourceTrack, { bands: 36, loPass: 0, hiPass: 200, updateInterval: 60 });
   const canStart = online && status?.ready && status.phase === 'idle' && !grant && !starting && !ending && !auditionBusy;
   const agentReady = connected && agent.isConnected;
-  const canSend = validMessage(draft) && !sending && !pendingText && !starting && !ending && (agentReady || (canStart && consent));
+  const canSend = validMessage(draft) && !sending && !pendingText && !starting && !ending && !approval && !unsafeStop && (agentReady || (canStart && consent));
   const mlx = status?.voice.backend === 'mlx';
   const streaming = mlx && status?.voice.streaming === true;
+
+  useEffect(() => {
+    const receiveApprovalEvent = (
+      payload: Uint8Array,
+      participant?: RemoteParticipant,
+      _kind?: unknown,
+      topic?: string,
+    ) => {
+      if (participant?.identity !== grant?.agentIdentity) return;
+      if (topic === 'hermes.approval.request') {
+        const request = parseHermesApprovalRequest(payload);
+        if (request && !resolvedApprovals.current.has(`${request.runId}\u0000${request.requestId}`)) {
+          setApproval(request);
+        }
+        return;
+      }
+      if (topic === 'hermes.approval.resolved') {
+        const resolution = parseHermesApprovalResolution(payload);
+        if (!resolution) return;
+        const key = `${resolution.runId}\u0000${resolution.requestId}`;
+        resolvedApprovals.current.add(key);
+        if (resolvedApprovals.current.size > 128) {
+          const oldest = resolvedApprovals.current.values().next().value;
+          if (oldest !== undefined) resolvedApprovals.current.delete(oldest);
+        }
+        setApproval((current) => (
+          current?.runId === resolution.runId && current.requestId === resolution.requestId
+            ? null
+            : current
+        ));
+        return;
+      }
+      if (topic === 'hermes.tool.status') {
+        const toolStatus = parseHermesToolStatus(payload);
+        if (!toolStatus || toolEventIds.current.has(toolStatus.eventId)) return;
+        toolEventIds.current.add(toolStatus.eventId);
+        setToolStatuses((current) => {
+          const next = [...current, toolStatus].slice(-64);
+          toolEventIds.current.clear();
+          for (const item of next) toolEventIds.current.add(item.eventId);
+          return next;
+        });
+      }
+    };
+    session.room.on(RoomEvent.DataReceived, receiveApprovalEvent);
+    return () => { session.room.off(RoomEvent.DataReceived, receiveApprovalEvent); };
+  }, [grant?.agentIdentity, session.room]);
+
+  useEffect(() => {
+    setApproval(null);
+    setToolStatuses([]);
+    setUnsafeStop(false);
+    resolvedApprovals.current.clear();
+    toolEventIds.current.clear();
+  }, [grant?.agentIdentity, grant?.sessionId]);
+
+  const respondToApproval = useCallback(async (
+    request: HermesApprovalRequest,
+    choice: HermesApprovalChoice,
+  ) => {
+    if (!grant || unsafeStop) throw new Error('Approval interaction is blocked.');
+    const response = await local.localParticipant.performRpc({
+      destinationIdentity: grant.agentIdentity,
+      method: 'hermes.approval.respond',
+      payload: JSON.stringify({ runId: request.runId, requestId: request.requestId, choice }),
+      responseTimeout: 5_000,
+    });
+    let acknowledgement: unknown;
+    try { acknowledgement = JSON.parse(response); } catch { throw new Error('Invalid acknowledgement.'); }
+    if (
+      !acknowledgement
+      || typeof acknowledgement !== 'object'
+      || Array.isArray(acknowledgement)
+      || Object.keys(acknowledgement).length !== 1
+      || (acknowledgement as Record<string, unknown>).accepted !== true
+    ) throw new Error('Invalid acknowledgement.');
+  }, [grant, local.localParticipant, unsafeStop]);
+
 
   useEffect(() => {
     const incoming = chat.messages.map((message) => ({
@@ -159,16 +248,20 @@ function Workspace({ studio, setMuted }: { studio: Studio; setMuted: (muted: boo
 
   useEffect(() => {
     if (!grant) {
-      setAwaitingSilence(false);
       setMuted(false);
-    } else if (awaitingSilence && !interrupting && agent.state !== 'speaking') {
-      setAwaitingSilence(false);
-      setMuted(false);
-      setAnnouncement('Reply stopped.');
     } else {
-      setMuted(interrupting || awaitingSilence);
+      setMuted(interrupting || unsafeStop || !!approval);
     }
-  }, [agent.state, awaitingSilence, grant, interrupting, setMuted]);
+  }, [approval, grant, interrupting, setMuted, unsafeStop]);
+
+  useEffect(() => {
+    if (approval && micEnabled) {
+      void local.localParticipant.setMicrophoneEnabled(false).catch(() => {
+        setUnsafeStop(true);
+        studio.setError('The microphone could not be paused for approval. End the session before responding.');
+      });
+    }
+  }, [approval, local.localParticipant, micEnabled, studio.setError]);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -182,7 +275,7 @@ function Workspace({ studio, setMuted }: { studio: Studio; setMuted: (muted: boo
   }
 
   async function toggleMic() {
-    if (micBusy || !connected) return;
+    if (micBusy || !connected || !!approval || unsafeStop) return;
     setMicBusy(true);
     studio.setError(null);
     try {
@@ -196,16 +289,43 @@ function Workspace({ studio, setMuted }: { studio: Studio; setMuted: (muted: boo
   }
 
   async function interrupt() {
-    if (!grant || interrupting || awaitingSilence) return;
+    if (!grant || interrupting) return;
     setInterrupting(true);
-    setAwaitingSilence(true);
     setMuted(true);
     try {
-      await local.localParticipant.performRpc({ destinationIdentity: grant.agentIdentity, method: 'voicebox.interrupt', payload: '{}', responseTimeout: 5_000 });
-      setAnnouncement('Stop request acknowledged.');
+      const response = await local.localParticipant.performRpc({ destinationIdentity: grant.agentIdentity, method: 'voicebox.interrupt', payload: '{}', responseTimeout: 5_000 });
+      const acknowledgement: unknown = JSON.parse(response);
+      if (!acknowledgement || typeof acknowledgement !== 'object' || Array.isArray(acknowledgement)) {
+        throw new Error('Invalid acknowledgement.');
+      }
+      const result = acknowledgement as Record<string, unknown>;
+      const hermes = status?.ai.provider === 'hermes';
+      const expectedKeys = new Set(['stoppedPlayback', 'hermesStopRequested', 'hermesTerminalAcknowledged', 'actionUndone', 'backendState']);
+      if (hermes && (
+        Object.keys(result).length !== expectedKeys.size
+        || Object.keys(result).some((key) => !expectedKeys.has(key))
+        || result.stoppedPlayback !== true
+        || typeof result.hermesStopRequested !== 'boolean'
+        || typeof result.hermesTerminalAcknowledged !== 'boolean'
+        || result.actionUndone !== false
+        || typeof result.backendState !== 'string'
+      )) throw new Error('Invalid acknowledgement.');
+      if (!hermes && Object.keys(result).length > 0 && (
+        result.actionUndone !== false
+        || result.stoppedPlayback !== true
+        || typeof result.hermesStopRequested !== 'boolean'
+      )) throw new Error('Invalid acknowledgement.');
+      if (hermes && result.hermesTerminalAcknowledged !== true) {
+        setUnsafeStop(true);
+        studio.setError('The agent could not confirm Hermes stopped. Sending and microphone input remain blocked; use End session.');
+        return;
+      }
+      setAnnouncement('Speech stopped. Any completed Hermes action remains completed.');
     } catch {
-      setAwaitingSilence(false);
-      studio.setError('The agent could not confirm the stop request. Use End session to stop all audio.');
+      if (status?.ai.provider === 'hermes') setUnsafeStop(true);
+      studio.setError(status?.ai.provider === 'hermes'
+        ? 'The agent could not confirm Hermes stopped. Sending and microphone input remain blocked; use End session.'
+        : 'The agent could not confirm the stop request. Use End session to stop all audio.');
     } finally {
       setInterrupting(false);
     }
@@ -233,7 +353,8 @@ function Workspace({ studio, setMuted }: { studio: Studio; setMuted: (muted: boo
     !status?.ready ? 'Check the pipeline and resolve the setup items below.' :
     'Start a session, then choose text or microphone.';
   if (agent.state === 'failed' && grant) help = 'The agent did not become ready. End this session and check the local worker before retrying.';
-  if (interrupting || awaitingSilence) help = 'Stopping the reply. Speaker audio stays muted until the agent stops speaking.';
+  if (interrupting) help = 'Stopping the reply. Speaker audio stays muted until the agent responds or the request times out.';
+  if (unsafeStop) help = 'Hermes stop was not confirmed. Sending and microphone input remain blocked; end this session before continuing.';
 
   return <div className="app-shell">
     <header className="app-header">
@@ -257,15 +378,15 @@ function Workspace({ studio, setMuted }: { studio: Studio; setMuted: (muted: boo
           <div className="voice-controls">
             {!grant && <button className="button primary" disabled={!canStart || !consent} onClick={() => void studio.start()}>{starting ? 'Connecting…' : ending || state === 'draining' ? 'Finishing session…' : 'Start session'}<Icon name="arrow" /></button>}
             {grant && <>
-              <button className={`button ${micEnabled ? 'primary' : 'secondary'}`} disabled={!connected || micBusy || ending} onClick={() => void toggleMic()} aria-pressed={micEnabled}><Icon name="mic" />{micBusy ? 'Updating mic…' : micEnabled ? 'Turn mic off' : 'Turn mic on'}</button>
-              <button className="button secondary" disabled={!connected || !['speaking', 'thinking'].includes(agent.state) || interrupting || awaitingSilence || ending} onClick={() => void interrupt()}><Icon name="stop" />{interrupting || awaitingSilence ? 'Stopping…' : 'Stop reply'}</button>
+              <button className={`button ${micEnabled ? 'primary' : 'secondary'}`} disabled={!connected || micBusy || ending || !!approval || unsafeStop} onClick={() => void toggleMic()} aria-pressed={micEnabled}><Icon name="mic" />{micBusy ? 'Updating mic…' : micEnabled ? 'Turn mic off' : 'Turn mic on'}</button>
+              <button className="button secondary" disabled={!connected || !['speaking', 'thinking'].includes(agent.state) || interrupting || ending} onClick={() => void interrupt()}><Icon name="stop" />{interrupting ? 'Stopping…' : 'Stop reply'}</button>
               <button className="button quiet end-session" disabled={ending} onClick={() => { setPendingText(null); void studio.end(); }}><Icon name="close" />{ending ? 'Ending…' : 'End session'}</button>
             </>}
           </div>
           {connected && <StartAudio className="button audio-unlock" label="Enable speaker audio" />}
         </div>
         {!grant && <div className="privacy">
-          <label><input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} /><span>I understand that LiveKit carries this conversation and {status?.stt?.local ? 'cloud AI processes conversation text. Speech recognition stays on this machine.' : 'cloud AI processes speech and text.'}</span></label>
+          <label><input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} /><span>I understand that LiveKit carries this conversation and {status?.stt?.local ? 'the configured reasoning provider receives conversation text. Speech recognition stays on this machine.' : 'the configured speech and reasoning providers process speech and text.'}</span></label>
           <p>Speech is generated locally. No microphone access until you turn it on. This page keeps transcripts in memory, not browser storage.</p>
         </div>}
         <div className="notices" aria-live="polite">
@@ -275,6 +396,20 @@ function Workspace({ studio, setMuted }: { studio: Studio; setMuted: (muted: boo
           {studio.error && <div className="notice error" role="alert"><p>{studio.error}</p><button className="button quiet" onClick={() => studio.setError(null)} aria-label="Dismiss error"><Icon name="close" /></button></div>}
           {studio.heartbeatError && <div className="notice warning"><p>{studio.heartbeatError}</p></div>}
         </div>
+        {approval && <HermesApproval
+          request={approval}
+          onRespond={respondToApproval}
+          disabled={unsafeStop}
+        />}
+        {toolStatuses.length > 0 && <section className="hermes-actions" aria-labelledby="hermes-actions-title">
+          <h2 id="hermes-actions-title">Hermes actions</h2>
+          <ol>
+            {toolStatuses.map((item) => <li key={item.eventId}>
+              <strong>{item.phase === 'completed' ? item.error ? 'Failed' : 'Completed' : 'Started'}: {item.tool}</strong>
+              {item.preview && <span>{item.preview}</span>}
+            </li>)}
+          </ol>
+        </section>}
         <section className="conversation" aria-label="Conversation transcript">
           <div className="transcript-heading"><h2>Conversation</h2><button className="button quiet clear-button" disabled={!messages.length} onClick={clearTranscript}>Clear transcript</button></div>
           <div className="transcript" ref={scrollRef} role="log" aria-label="Conversation messages" aria-live="polite" aria-relevant="additions text" tabIndex={0} onScroll={(event) => {

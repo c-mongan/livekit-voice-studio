@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   chat: {} as Record<string, any>,
   mute: vi.fn(),
   bands: vi.fn(),
+  roomHandlers: {} as Record<string, (...args: any[]) => void>,
 }));
 vi.mock('./useStudio', () => ({ useStudio: () => mocks.studio }));
 vi.mock('./useStudioAgent', () => ({ useStudioAgent: () => mocks.agent }));
@@ -68,13 +69,21 @@ beforeEach(() => {
   vi.stubGlobal('matchMedia', vi.fn(() => mediaQuery));
   mocks.bands.mockReturnValue(new Array(36).fill(0));
   mocks.agent = { state: 'disconnected', isConnected: false, microphoneTrack: undefined };
-  const participant = { identity: 'test-you', get isMicrophoneEnabled() { return mocks.local.isMicrophoneEnabled; }, setMicrophoneEnabled: vi.fn().mockResolvedValue(undefined), performRpc: vi.fn().mockResolvedValue('{}') };
+  const participant = { identity: 'test-you', get isMicrophoneEnabled() { return mocks.local.isMicrophoneEnabled; }, setMicrophoneEnabled: vi.fn().mockResolvedValue(undefined), performRpc: vi.fn().mockResolvedValue('{"accepted":true}') };
   mocks.local = { isMicrophoneEnabled: false, localParticipant: participant };
   mocks.chat = { messages: [], send: vi.fn().mockResolvedValue({ id: 'sent' }), isSending: false };
+  mocks.roomHandlers = {};
+  const room = {
+    localParticipant: participant,
+    on: vi.fn((event: string, handler: (...args: any[]) => void) => { mocks.roomHandlers[event] = handler; }),
+    off: vi.fn((event: string, handler: (...args: any[]) => void) => {
+      if (mocks.roomHandlers[event] === handler) delete mocks.roomHandlers[event];
+    }),
+  };
   mocks.studio = {
     status: structuredClone(readyStatus), online: true, grant: null, connected: false,
     starting: false, ending: false, error: null, heartbeatError: null,
-    session: { connectionState: 'disconnected', room: { localParticipant: participant }, local: {} },
+    session: { connectionState: 'disconnected', room, local: {} },
     start: vi.fn().mockResolvedValue(true), end: vi.fn().mockResolvedValue(undefined), refresh: vi.fn(),
     setError: vi.fn((error) => { mocks.studio.error = error; render(); }),
   };
@@ -323,8 +332,9 @@ describe('microphone, playback and lifecycle controls', () => {
     expect(mocks.local.localParticipant.setMicrophoneEnabled).toHaveBeenCalledExactlyOnceWith(false);
   });
 
-  it('stop uses the granted RPC and waits for both acknowledgement and observed silence', async () => {
+  it('stop uses the granted RPC, mutes through acknowledgement, and states action truth', async () => {
     connect();
+    mocks.studio.status.ai.provider = 'hermes';
     mocks.agent.state = 'speaking';
     const ack = deferred<string>();
     mocks.local.localParticipant.performRpc.mockReturnValue(ack.promise);
@@ -335,12 +345,10 @@ describe('microphone, playback and lifecycle controls', () => {
     });
     expect(mocks.mute).toHaveBeenLastCalledWith(true);
     expect(button('Stopping…').disabled).toBe(true);
-    await act(async () => ack.resolve('{}'));
-    expect(mocks.mute).toHaveBeenLastCalledWith(true);
-    expect(button('Stopping…').disabled).toBe(true);
-    await act(async () => { mocks.agent.state = 'listening'; render(); });
+    await act(async () => ack.resolve(JSON.stringify({ stoppedPlayback: true, hermesStopRequested: true, hermesTerminalAcknowledged: true, actionUndone: false, backendState: 'ready' })));
     expect(mocks.mute).toHaveBeenLastCalledWith(false);
-    expect(host.textContent).toContain('Reply stopped.');
+    expect(button('Stop reply').disabled).toBe(false);
+    expect(host.textContent).toContain('Speech stopped. Any completed Hermes action remains completed.');
     await act(async () => { mocks.agent.state = 'speaking'; render(); });
     expect(mocks.mute).toHaveBeenLastCalledWith(false);
   });
@@ -356,6 +364,29 @@ describe('microphone, playback and lifecycle controls', () => {
     expect(mocks.mute).toHaveBeenLastCalledWith(true);
     await act(async () => ack.resolve('{}'));
     expect(mocks.mute).toHaveBeenLastCalledWith(false);
+    expect(host.textContent).toContain('Speech stopped. Any completed Hermes action remains completed.');
+  });
+
+  it.each([
+    ['empty object', {}],
+    ['no captured run', { stoppedPlayback: true, hermesStopRequested: false, hermesTerminalAcknowledged: false, actionUndone: false, backendState: 'ready' }],
+    ['captured without terminal acknowledgement', { stoppedPlayback: true, hermesStopRequested: true, hermesTerminalAcknowledged: false, actionUndone: false, backendState: 'ready' }],
+  ])('fails closed for Hermes interrupt acknowledgement: %s', async (_label, acknowledgement) => {
+    connect();
+    mocks.studio.status.ai.provider = 'hermes';
+    mocks.agent.state = 'thinking';
+    mocks.local.localParticipant.performRpc.mockResolvedValueOnce(JSON.stringify(acknowledgement));
+    await mount();
+    await type('must stay blocked');
+
+    await click(button('Stop reply'));
+
+    expect(mocks.mute).toHaveBeenLastCalledWith(true);
+    expect(host.querySelector('.session-status')?.textContent).toContain('Needs attention');
+    expect(host.querySelector('[role=alert]')?.textContent).toContain('could not confirm Hermes stopped');
+    expect(button('Send').disabled).toBe(true);
+    expect(button('Turn mic on').disabled).toBe(true);
+    expect(button('End session').disabled).toBe(false);
   });
 
   it('failed stop restores playback and gives an actionable End session fallback', async () => {
@@ -369,6 +400,59 @@ describe('microphone, playback and lifecycle controls', () => {
     expect(host.textContent).not.toContain('RPC secret');
     await click(button('End session'));
     expect(mocks.studio.end).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps Hermes input and playback locked when stop acknowledgement is unavailable', async () => {
+    connect();
+    mocks.studio.status.ai.provider = 'hermes';
+    mocks.agent.state = 'thinking';
+    mocks.local.localParticipant.performRpc.mockRejectedValueOnce(new Error('RPC secret'));
+    await mount();
+    await type('must stay blocked');
+    await click(button('Stop reply'));
+
+    expect(mocks.mute).toHaveBeenLastCalledWith(true);
+    expect(host.querySelector('.session-status')?.textContent).toContain('Needs attention');
+    expect(button('Send').disabled).toBe(true);
+    expect(button('Turn mic on').disabled).toBe(true);
+  });
+
+  it('keeps Hermes stop failure fail-closed across reconnects until the grant ends', async () => {
+    connect();
+    mocks.studio.status.ai.provider = 'hermes';
+    mocks.agent.state = 'speaking';
+    mocks.local.localParticipant.performRpc.mockResolvedValueOnce(JSON.stringify({
+      stoppedPlayback: true,
+      hermesStopRequested: true,
+      hermesTerminalAcknowledged: false,
+      actionUndone: false,
+      backendState: 'ready',
+    }));
+    await mount();
+    await type('must stay blocked');
+    await click(button('Stop reply'));
+
+    expect(mocks.mute).toHaveBeenLastCalledWith(true);
+    expect(host.querySelector('.session-status')?.textContent).toContain('Needs attention');
+    expect(host.querySelector('[role=alert]')?.textContent).toContain('could not confirm Hermes stopped');
+    expect(button('Send').disabled).toBe(true);
+    expect(button('Turn mic on').disabled).toBe(true);
+    expect(button('End session').disabled).toBe(false);
+
+    await act(async () => {
+      mocks.studio.connected = false;
+      mocks.studio.session.connectionState = 'disconnected';
+      render();
+    });
+    await act(async () => {
+      mocks.studio.connected = true;
+      mocks.studio.session.connectionState = 'connected';
+      render();
+    });
+
+    expect(button('Send').disabled).toBe(true);
+    expect(button('Turn mic on').disabled).toBe(true);
+    expect(host.querySelector('.session-status')?.textContent).toContain('Needs attention');
   });
 
   it('disables sending and mic during reconnect, and blocks new starts during draining', async () => {
@@ -397,6 +481,218 @@ describe('microphone, playback and lifecycle controls', () => {
     expect(button('Start session').disabled).toBe(true);
     expect(host.textContent).toContain('owning browser');
     expect(mocks.studio.start).not.toHaveBeenCalled();
+  });
+});
+
+describe('Hermes approval flow', () => {
+  const approval = {
+    runId: 'run-approval', requestId: 'request-approval', command: 'rm redacted-file', choices: ['once', 'deny'],
+  };
+
+  async function receive(value: object, sender = testGrant.agentIdentity) {
+    await act(async () => mocks.roomHandlers.dataReceived(
+      new TextEncoder().encode(JSON.stringify(value)), { identity: sender }, 0, 'hermes.approval.request',
+    ));
+  }
+
+  async function resolve(value: object, sender = testGrant.agentIdentity) {
+    await act(async () => mocks.roomHandlers.dataReceived(
+      new TextEncoder().encode(JSON.stringify(value)), { identity: sender }, 0, 'hermes.approval.resolved',
+    ));
+  }
+
+  async function receiveTool(value: object, sender = testGrant.agentIdentity) {
+    await act(async () => mocks.roomHandlers.dataReceived(
+      new TextEncoder().encode(JSON.stringify(value)), { identity: sender }, 0, 'hermes.tool.status',
+    ));
+  }
+
+  it('accepts requests only from the granted agent and sends exact owner RPC data', async () => {
+    connect();
+    await mount();
+    await receive(approval, 'other-participant');
+    expect(host.textContent).not.toContain('rm redacted-file');
+    await receive({ ...approval, unknown: true });
+    expect(host.textContent).not.toContain('rm redacted-file');
+    await receive(approval);
+    expect(host.textContent).toContain('rm redacted-file');
+
+    await click(button('Deny'));
+    expect(mocks.local.localParticipant.performRpc).toHaveBeenCalledExactlyOnceWith({
+      destinationIdentity: testGrant.agentIdentity,
+      method: 'hermes.approval.respond',
+      payload: JSON.stringify({ runId: 'run-approval', requestId: 'request-approval', choice: 'deny' }),
+      responseTimeout: 5_000,
+    });
+    expect(host.textContent).toContain('rm redacted-file');
+    expect(button('Deny').disabled).toBe(true);
+    await resolve({ runId: approval.runId, requestId: approval.requestId });
+    expect(host.textContent).not.toContain('rm redacted-file');
+  });
+
+  it('pauses typed and microphone input while approval remains authoritative', async () => {
+    connect();
+    mocks.local.isMicrophoneEnabled = true;
+    await mount();
+    await type('do not send');
+    await receive(approval);
+
+    expect(button('Send').disabled).toBe(true);
+    expect(button('Turn mic off').disabled).toBe(true);
+    expect(mocks.local.localParticipant.setMicrophoneEnabled).toHaveBeenCalledWith(false);
+  });
+
+  it('keeps completed action status visible after an acknowledged interruption', async () => {
+    connect();
+    mocks.agent.state = 'speaking';
+    mocks.local.localParticipant.performRpc.mockResolvedValueOnce(JSON.stringify({
+      stoppedPlayback: true,
+      hermesStopRequested: true,
+      hermesTerminalAcknowledged: true,
+      actionUndone: false,
+      backendState: 'ready',
+    }));
+    await mount();
+    await receiveTool({
+      runId: 'run-tool', eventId: 'run-tool:2', phase: 'completed', tool: 'read_file',
+      preview: 'HERMES-LIVE-FIXTURE-7F31', duration: 0.125, error: false,
+    });
+    expect(host.querySelector('.hermes-actions')?.textContent).toContain('HERMES-LIVE-FIXTURE-7F31');
+
+    await click(button('Stop reply'));
+
+    expect(host.querySelector('.hermes-actions')?.textContent).toContain('Completed');
+    expect(host.querySelector('.hermes-actions')?.textContent).toContain('HERMES-LIVE-FIXTURE-7F31');
+  });
+
+  it('bounds tool event dedupe identifiers to the rendered 64-status window', async () => {
+    connect();
+    await mount();
+    for (let index = 1; index <= 65; index += 1) {
+      await receiveTool({
+        runId: 'run-tool', eventId: `run-tool:${index}`, phase: 'started', tool: 'read_file',
+        preview: `event-${index}`,
+      });
+    }
+    await receiveTool({
+      runId: 'run-tool', eventId: 'run-tool:1', phase: 'started', tool: 'read_file',
+      preview: 'event-1-replayed',
+    });
+
+    const statuses = host.querySelectorAll('.hermes-actions li');
+    expect(statuses).toHaveLength(64);
+    expect(statuses[statuses.length - 1]?.textContent).toContain('event-1-replayed');
+  });
+
+  it('blocks every interaction when microphone pause fails during approval', async () => {
+    connect();
+    mocks.local.isMicrophoneEnabled = true;
+    mocks.local.localParticipant.setMicrophoneEnabled.mockRejectedValueOnce(new Error('device secret'));
+    await mount();
+    await type('must stay blocked');
+
+    await receive(approval);
+
+    expect(mocks.mute).toHaveBeenLastCalledWith(true);
+    expect(host.querySelector('.session-status')?.textContent).toContain('Needs attention');
+    expect(host.querySelector('[role=alert]')?.textContent).toContain('could not be paused');
+    expect(host.textContent).not.toContain('device secret');
+    expect(button('Send').disabled).toBe(true);
+    expect(button('Turn mic off').disabled).toBe(true);
+    expect(button('Allow once').disabled).toBe(true);
+    expect(button('Deny').disabled).toBe(true);
+    expect(button('End session').disabled).toBe(false);
+  });
+
+  it('clears only the exact approval named by a terminal event', async () => {
+    connect();
+    await mount();
+    await receive(approval);
+    expect(host.textContent).toContain('rm redacted-file');
+    await resolve({ runId: approval.runId, requestId: approval.requestId, extra: true });
+    await resolve({ runId: approval.runId, requestId: approval.requestId }, 'other-participant');
+    expect(host.textContent).toContain('rm redacted-file');
+    await resolve({ runId: approval.runId, requestId: approval.requestId });
+    expect(host.textContent).not.toContain('rm redacted-file');
+  });
+
+  it('keeps a newer approval when a stale terminal event names an old request', async () => {
+    connect();
+    await mount();
+    await receive({ ...approval, requestId: 'request-new', command: 'new bounded command' });
+    await resolve({ runId: approval.runId, requestId: 'request-old' });
+    expect(host.textContent).toContain('new bounded command');
+  });
+
+  it('does not resurrect a delayed approval delivered after its terminal event', async () => {
+    connect();
+    await mount();
+    await resolve({ runId: approval.runId, requestId: approval.requestId });
+    await receive(approval);
+    expect(host.textContent).not.toContain('rm redacted-file');
+  });
+
+  it('clears grant-scoped authority state when one non-null grant directly replaces another', async () => {
+    connect();
+    mocks.studio.status.ai.provider = 'hermes';
+    mocks.agent.state = 'speaking';
+    mocks.local.localParticipant.performRpc.mockResolvedValueOnce(JSON.stringify({
+      stoppedPlayback: true,
+      hermesStopRequested: true,
+      hermesTerminalAcknowledged: false,
+      actionUndone: false,
+      backendState: 'ready',
+    }));
+    await mount();
+    await type('new grant may send this');
+    await click(button('Stop reply'));
+    await receive(approval);
+    await resolve({ runId: 'run-reused', requestId: 'request-reused' });
+    await receiveTool({
+      runId: 'run-old', eventId: 'event-reused', phase: 'started', tool: 'read_file', preview: 'old grant action',
+    });
+    expect(host.textContent).toContain('rm redacted-file');
+    expect(host.textContent).toContain('old grant action');
+    expect(host.querySelector('.session-status')?.textContent).toContain('Needs attention');
+
+    const replacement = {
+      ...testGrant,
+      sessionId: 'replacement-owner',
+      roomName: 'replacement-room',
+      agentIdentity: 'replacement-agent',
+    };
+    await act(async () => {
+      mocks.studio.grant = replacement;
+      mocks.agent.state = 'listening';
+      render();
+    });
+
+    expect(host.textContent).not.toContain('rm redacted-file');
+    expect(host.textContent).not.toContain('old grant action');
+    expect(host.querySelector('.session-status')?.textContent).not.toContain('Needs attention');
+    expect(button('Send').disabled).toBe(false);
+
+    await receive({ ...approval, runId: 'run-reused', requestId: 'request-reused', command: 'replacement command' }, replacement.agentIdentity);
+    await receiveTool({
+      runId: 'run-new', eventId: 'event-reused', phase: 'started', tool: 'write_file', preview: 'replacement grant action',
+    }, replacement.agentIdentity);
+    expect(host.textContent).toContain('replacement command');
+    expect(host.textContent).toContain('replacement grant action');
+    await click(button('Deny'));
+    expect(mocks.local.localParticipant.performRpc).toHaveBeenLastCalledWith({
+      destinationIdentity: replacement.agentIdentity,
+      method: 'hermes.approval.respond',
+      payload: JSON.stringify({ runId: 'run-reused', requestId: 'request-reused', choice: 'deny' }),
+      responseTimeout: 5_000,
+    });
+  });
+
+  it('keeps the displayed approval when a terminal event belongs to another run', async () => {
+    connect();
+    await mount();
+    await receive(approval);
+    await resolve({ runId: 'other-run', requestId: approval.requestId });
+    expect(host.textContent).toContain('rm redacted-file');
   });
 });
 
@@ -444,6 +740,20 @@ describe('truthful transcript and accessible visual state', () => {
     expect(host.querySelector('.pipeline li:last-child p')?.textContent).toBe('Voicebox · on this machine');
     expect(host.querySelector('.about-body')?.textContent).toContain('complete WAV audio');
     expect(host.textContent).not.toContain('Qwen · local streaming');
+  });
+
+  it('labels Hermes locality as control-plane location rather than local reasoning', async () => {
+    mocks.studio.status.ai = {
+      provider: 'hermes', model: 'profile-default', effort: 'none', local: true, profile: 'default',
+    };
+
+    await mount();
+
+    const reasoning = host.querySelectorAll('.pipeline li')[1];
+    expect(reasoning.textContent).toContain('Hermes · profile-default');
+    expect(reasoning.textContent).toContain('Local Hermes control plane');
+    expect(reasoning.textContent).not.toContain('Local model');
+    expect(host.querySelector('.about-body')?.textContent).toContain('Hermes controls model routing');
   });
 
   it('describes reported MLX PCM streaming without claiming a cold worker is loaded', async () => {
