@@ -90,7 +90,6 @@ function Workspace({ studio, setMuted }: { studio: Studio; setMuted: (muted: boo
   const [sending, setSending] = useState(false);
   const [micBusy, setMicBusy] = useState(false);
   const [interrupting, setInterrupting] = useState(false);
-  const [awaitingSilence, setAwaitingSilence] = useState(false);
   const [messages, setMessages] = useState<TranscriptMessage[]>([]);
   const [announcement, setAnnouncement] = useState('');
   const cleared = useRef(new Set<string>());
@@ -164,16 +163,11 @@ function Workspace({ studio, setMuted }: { studio: Studio; setMuted: (muted: boo
 
   useEffect(() => {
     if (!grant) {
-      setAwaitingSilence(false);
       setMuted(false);
-    } else if (awaitingSilence && !interrupting && agent.state !== 'speaking') {
-      setAwaitingSilence(false);
-      setMuted(false);
-      setAnnouncement('Reply stopped.');
     } else {
-      setMuted(interrupting || awaitingSilence);
+      setMuted(interrupting);
     }
-  }, [agent.state, awaitingSilence, grant, interrupting, setMuted]);
+  }, [grant, interrupting, setMuted]);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -201,15 +195,13 @@ function Workspace({ studio, setMuted }: { studio: Studio; setMuted: (muted: boo
   }
 
   async function interrupt() {
-    if (!grant || interrupting || awaitingSilence) return;
+    if (!grant || interrupting) return;
     setInterrupting(true);
-    setAwaitingSilence(true);
     setMuted(true);
     try {
       await local.localParticipant.performRpc({ destinationIdentity: grant.agentIdentity, method: 'voicebox.interrupt', payload: '{}', responseTimeout: 5_000 });
-      setAnnouncement('Stop request acknowledged.');
+      setAnnouncement('Speech stopped. Any completed Hermes action remains completed.');
     } catch {
-      setAwaitingSilence(false);
       studio.setError('The agent could not confirm the stop request. Use End session to stop all audio.');
     } finally {
       setInterrupting(false);
@@ -238,7 +230,7 @@ function Workspace({ studio, setMuted }: { studio: Studio; setMuted: (muted: boo
     !status?.ready ? 'Check the pipeline and resolve the setup items below.' :
     'Start a session, then choose text or microphone.';
   if (agent.state === 'failed' && grant) help = 'The agent did not become ready. End this session and check the local worker before retrying.';
-  if (interrupting || awaitingSilence) help = 'Stopping the reply. Speaker audio stays muted until the agent stops speaking.';
+  if (interrupting) help = 'Stopping the reply. Speaker audio stays muted until the agent responds or the request times out.';
 
   return <div className="app-shell">
     <header className="app-header">
@@ -263,7 +255,7 @@ function Workspace({ studio, setMuted }: { studio: Studio; setMuted: (muted: boo
             {!grant && <button className="button primary" disabled={!canStart || !consent} onClick={() => void studio.start()}>{starting ? 'Connecting…' : ending || state === 'draining' ? 'Finishing session…' : 'Start session'}<Icon name="arrow" /></button>}
             {grant && <>
               <button className={`button ${micEnabled ? 'primary' : 'secondary'}`} disabled={!connected || micBusy || ending} onClick={() => void toggleMic()} aria-pressed={micEnabled}><Icon name="mic" />{micBusy ? 'Updating mic…' : micEnabled ? 'Turn mic off' : 'Turn mic on'}</button>
-              <button className="button secondary" disabled={!connected || !['speaking', 'thinking'].includes(agent.state) || interrupting || awaitingSilence || ending} onClick={() => void interrupt()}><Icon name="stop" />{interrupting || awaitingSilence ? 'Stopping…' : 'Stop reply'}</button>
+              <button className="button secondary" disabled={!connected || !['speaking', 'thinking'].includes(agent.state) || interrupting || ending} onClick={() => void interrupt()}><Icon name="stop" />{interrupting ? 'Stopping…' : 'Stop reply'}</button>
               <button className="button quiet end-session" disabled={ending} onClick={() => { setPendingText(null); void studio.end(); }}><Icon name="close" />{ending ? 'Ending…' : 'End session'}</button>
             </>}
           </div>

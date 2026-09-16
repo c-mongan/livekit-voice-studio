@@ -202,6 +202,11 @@ async def fake_backend(broker, monkeypatch):
 
 
 async def test_scoped_tokens_and_one_session_at_a_time(broker, monkeypatch):
+    monkeypatch.setenv("VOICEBOX_LLM_PROVIDER", "hermes")
+    monkeypatch.setenv("HERMES_PROFILE", "voice-profile")
+    monkeypatch.setenv("HERMES_API_BASE_URL", "https://hermes.example")
+    monkeypatch.setenv("HERMES_API_SERVER_KEY", "server-secret")
+    monkeypatch.setenv("HERMES_UNRELATED_SECRET", "must-not-cross-worker-boundary")
     process, fake_api = await fake_backend(broker, monkeypatch)
     data = await broker.create()
     claims = api.TokenVerifier("unit-key", "unit-secret-with-32-characters-long").verify(
@@ -214,8 +219,16 @@ async def test_scoped_tokens_and_one_session_at_a_time(broker, monkeypatch):
     assert data["sessionId"] not in data["participantToken"]
     spawn = asyncio.create_subprocess_exec
     assert isinstance(spawn, AsyncMock)
-    assert spawn.await_args.kwargs["env"]["HERMES_VOICE_SESSION_ID"] == data["sessionId"]
+    worker_env = spawn.await_args.kwargs["env"]
+    assert worker_env["HERMES_VOICE_SESSION_ID"] == f"voice:{data['roomName']}"
+    assert worker_env["HERMES_PROFILE"] == "voice-profile"
+    assert worker_env["HERMES_API_BASE_URL"] == "https://hermes.example"
+    assert worker_env["HERMES_API_SERVER_KEY"] == "server-secret"
+    assert "HERMES_UNRELATED_SECRET" not in worker_env
     assert "unit-secret" not in json.dumps(data)
+    assert "server-secret" not in json.dumps(data)
+    assert "voice-profile" not in json.dumps(data)
+    assert "hermes.example" not in json.dumps(data)
     with pytest.raises(StudioError):
         await broker.create()
     fake_api.room.create_room.assert_awaited_once()

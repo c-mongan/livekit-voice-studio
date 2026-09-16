@@ -15,6 +15,7 @@ from livekit.agents.metrics import EOUMetrics, LLMMetrics, TTSMetrics
 from livekit.plugins import voicebox
 
 from examples.fast_qwen import FastQwenTTS
+from examples.hermes_llm import HermesLLM
 from examples.minimal_agent import configured_ai, configured_provider, provider_choices
 from examples.startup_progress import STARTUP_MESSAGES
 
@@ -50,6 +51,8 @@ async def run() -> None:
     safe = True
     stage = report_startup("voice provider configuration")
     owner = os.environ["STUDIO_PARTICIPANT_IDENTITY"]
+    interrupted_run_id: str | None = None
+    interrupt_lock = asyncio.Lock()
 
     async def watch_parent() -> None:
         parent_pid = os.getppid()
@@ -184,12 +187,29 @@ async def run() -> None:
                     speech.commit_utterance()
 
         async def interrupt(data: rtc.RpcInvocationData) -> str:
+            nonlocal interrupted_run_id
             if data.caller_identity != owner:
                 raise rtc.RpcError(1403, "Only the session owner can stop this reply.")
             if session is None or provider is None:
                 raise rtc.RpcError(1503, "The conversation is not ready.")
             await session.interrupt(force=True)
-            return json.dumps({"stopped": True, "backendState": provider.backend_state})
+            hermes_stop_requested = False
+            if isinstance(language_model, HermesLLM):
+                async with interrupt_lock:
+                    run_id = language_model.active_run_id
+                    if run_id is not None:
+                        if interrupted_run_id != run_id:
+                            await language_model.stop_active()
+                            interrupted_run_id = run_id
+                        hermes_stop_requested = True
+            return json.dumps(
+                {
+                    "stoppedPlayback": True,
+                    "hermesStopRequested": hermes_stop_requested,
+                    "actionUndone": False,
+                    "backendState": provider.backend_state,
+                }
+            )
 
         token = (
             api.AccessToken()
@@ -219,17 +239,9 @@ async def run() -> None:
             ),
             agent=Agent(
                 instructions=(
-                    "You are a helpful conversational assistant, not a coding agent. "
-                    "Use one or two short sentences in plain text, usually under 40 words. "
-                    "Respond to the latest point instead of repeating greetings "
-                    "or stock acknowledgements. "
-                    "For casual chat, offer one relevant thought or gentle follow-up when useful; "
-                    "do not ask a question every turn. A brief okay or thanks is not necessarily "
-                    "a goodbye; only close the conversation when the user clearly ends it. "
-                    "If interrupted, follow the user’s new direction "
-                    "without finishing the old reply. "
-                    "Do not use markdown or lists unless asked. Do not claim actions or access "
-                    "to files or tools you do not have. Your speech is synthetic."
+                    "Reply for speech: concise plain text unless detail is needed. "
+                    "Hermes owns tools, memory, and approvals. Never claim an action was undone "
+                    "because playback stopped."
                 )
             ),
         )

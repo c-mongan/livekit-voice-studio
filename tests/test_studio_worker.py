@@ -1,9 +1,11 @@
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 
 from examples import studio_worker
+from examples.hermes_llm import HermesLLM
 
 
 @pytest.mark.parametrize("drain_succeeds", [True, False])
@@ -50,6 +52,14 @@ async def test_rpc_registration_follows_connection_and_shutdown_drains(monkeypat
         with pytest.raises(studio_worker.rtc.RpcError) as error:
             await handlers["rpc"](SimpleNamespace(caller_identity="another-participant"))
         assert error.value.code == 1403
+        result = json.loads(await handlers["rpc"](SimpleNamespace(caller_identity="user")))
+        repeated = json.loads(await handlers["rpc"](SimpleNamespace(caller_identity="user")))
+        assert result == repeated == {
+            "stoppedPlayback": True,
+            "hermesStopRequested": True,
+            "actionUndone": False,
+            "backendState": "ready",
+        }
         handlers["disconnected"](1)
         order.append("session-start")
 
@@ -58,20 +68,30 @@ async def test_rpc_registration_follows_connection_and_shutdown_drains(monkeypat
         if not drain_succeeds:
             raise RuntimeError("Unresolved backend")
 
+    async def stop_hermes():
+        order.append("hermes-stop")
+        # The RPC reports that a stop was requested, not that an external action was undone.
+        return False
+
     provider = SimpleNamespace(
         on=Mock(),
         resolve_profile=AsyncMock(),
         check_idle=AsyncMock(),
         model_readiness=AsyncMock(return_value=SimpleNamespace(downloaded=True, loaded=True)),
         aclose=AsyncMock(side_effect=drain),
+        backend_state="ready",
     )
     session = SimpleNamespace(
         on=lambda name: lambda callback: callback,
         start=AsyncMock(side_effect=start),
         aclose=AsyncMock(),
-        interrupt=AsyncMock(),
+        interrupt=AsyncMock(side_effect=lambda **_: order.append("playback-stopped")),
     )
-    speech, model = SimpleNamespace(aclose=AsyncMock()), SimpleNamespace(aclose=AsyncMock())
+    speech = SimpleNamespace(aclose=AsyncMock())
+    model = Mock(spec=HermesLLM)
+    model.active_run_id = "run-1"
+    model.stop_active = AsyncMock(side_effect=stop_hermes)
+    model.aclose = AsyncMock()
     monkeypatch.setattr(studio_worker.rtc, "Room", Room)
     monkeypatch.setattr(studio_worker, "configured_provider", lambda: provider)
     monkeypatch.setattr(studio_worker, "configured_ai", AsyncMock(return_value=(speech, model)))
@@ -98,9 +118,18 @@ async def test_rpc_registration_follows_connection_and_shutdown_drains(monkeypat
         "preemptive_generation": {"enabled": False},
     }
     assert order.index("connect") < order.index("rpc")
+    assert order.index("playback-stopped") < order.index("hermes-stop")
     assert order.index("provider-drained") < order.index("disconnect")
     assert reports[-1] == ("finished", {"safe": drain_succeeds})
-    session.interrupt.assert_awaited_once_with(force=True)
+    assert session.interrupt.await_count == 3
+    session.interrupt.assert_awaited_with(force=True)
+    model.stop_active.assert_awaited_once_with()
+    assert studio_worker.AgentSession.call_args.kwargs["llm"] is model
+    assert session.start.await_args.kwargs["agent"].instructions == (
+        "Reply for speech: concise plain text unless detail is needed. "
+        "Hermes owns tools, memory, and approvals. Never claim an action was undone "
+        "because playback stopped."
+    )
 
 
 def test_disconnected_supervisor_does_not_prevent_cleanup(monkeypatch, caplog):

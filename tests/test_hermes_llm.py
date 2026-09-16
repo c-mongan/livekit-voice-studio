@@ -225,10 +225,13 @@ async def test_stop_active_returns_acknowledgement_and_sends_stop_once(client: F
     await stream.aclose()
 
 
-async def test_stop_active_maps_acknowledged_cancelled_run_to_cancellation(
+async def test_stop_active_discards_late_deltas_and_maps_cancelled_run_to_cancellation(
     client: FakeClient,
 ) -> None:
-    client.runs = [[RunEvent("run.cancelled", {"run_id": "run_1", "status": "cancelled"})]]
+    client.runs = [[
+        RunEvent("message.delta", {"run_id": "run_1", "delta": "must not be spoken"}),
+        RunEvent("run.cancelled", {"run_id": "run_1", "status": "cancelled"}),
+    ]]
     client.statuses["run_1"] = [{"status": "cancelled"}]
     gate = asyncio.Event()
     original_events = client.events
@@ -246,7 +249,7 @@ async def test_stop_active_maps_acknowledged_cancelled_run_to_cancellation(
 
     assert await model.stop_active() is True
     gate.set()
-    await task
+    assert await task == []
     assert stream._task.cancelled()
 
 

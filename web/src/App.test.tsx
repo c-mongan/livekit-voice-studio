@@ -323,7 +323,7 @@ describe('microphone, playback and lifecycle controls', () => {
     expect(mocks.local.localParticipant.setMicrophoneEnabled).toHaveBeenCalledExactlyOnceWith(false);
   });
 
-  it('stop uses the granted RPC and waits for both acknowledgement and observed silence', async () => {
+  it('stop uses the granted RPC, mutes through acknowledgement, and states action truth', async () => {
     connect();
     mocks.agent.state = 'speaking';
     const ack = deferred<string>();
@@ -335,12 +335,10 @@ describe('microphone, playback and lifecycle controls', () => {
     });
     expect(mocks.mute).toHaveBeenLastCalledWith(true);
     expect(button('Stopping…').disabled).toBe(true);
-    await act(async () => ack.resolve('{}'));
-    expect(mocks.mute).toHaveBeenLastCalledWith(true);
-    expect(button('Stopping…').disabled).toBe(true);
-    await act(async () => { mocks.agent.state = 'listening'; render(); });
+    await act(async () => ack.resolve(JSON.stringify({ stoppedPlayback: true, hermesStopRequested: true, actionUndone: false, backendState: 'ready' })));
     expect(mocks.mute).toHaveBeenLastCalledWith(false);
-    expect(host.textContent).toContain('Reply stopped.');
+    expect(button('Stop reply').disabled).toBe(false);
+    expect(host.textContent).toContain('Speech stopped. Any completed Hermes action remains completed.');
     await act(async () => { mocks.agent.state = 'speaking'; render(); });
     expect(mocks.mute).toHaveBeenLastCalledWith(false);
   });
@@ -356,6 +354,7 @@ describe('microphone, playback and lifecycle controls', () => {
     expect(mocks.mute).toHaveBeenLastCalledWith(true);
     await act(async () => ack.resolve('{}'));
     expect(mocks.mute).toHaveBeenLastCalledWith(false);
+    expect(host.textContent).toContain('Speech stopped. Any completed Hermes action remains completed.');
   });
 
   it('failed stop restores playback and gives an actionable End session fallback', async () => {

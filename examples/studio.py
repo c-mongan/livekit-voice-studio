@@ -481,17 +481,27 @@ class Studio:
             )
             self.lease.mark_active()
             self.current = owned
-            env = dict(
-                os.environ,
+            # Do not leak ambient Hermes configuration into the worker. The
+            # selected control-plane values are the complete per-room contract.
+            env = {key: value for key, value in os.environ.items() if not key.startswith("HERMES_")}
+            env.update(
                 STUDIO_ROOM=owned.room,
                 STUDIO_PARTICIPANT_IDENTITY=owned.participant,
                 STUDIO_AGENT_IDENTITY=owned.agent,
                 STUDIO_EVENT_KEY=owned.key,
-                HERMES_VOICE_SESSION_ID=owned.id,
                 OTEL_SDK_DISABLED="true",
                 LK_DUMP_TTS="0",
                 PYTHONUNBUFFERED="1",
             )
+            if provider_choices()[1] == "hermes":
+                env.update(
+                    HERMES_PROFILE=os.environ.get("HERMES_PROFILE", "default"),
+                    HERMES_API_BASE_URL=os.environ.get(
+                        "HERMES_API_BASE_URL", "http://127.0.0.1:8642"
+                    ),
+                    HERMES_VOICE_SESSION_ID=f"voice:{owned.room}",
+                    HERMES_API_SERVER_KEY=os.environ["HERMES_API_SERVER_KEY"],
+                )
             owned.process = await asyncio.create_subprocess_exec(
                 sys.executable,
                 "-m",
