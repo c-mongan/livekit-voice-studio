@@ -15,7 +15,7 @@ from livekit.agents.metrics import EOUMetrics, LLMMetrics, TTSMetrics
 from livekit.plugins import voicebox
 
 from examples.fast_qwen import FastQwenTTS
-from examples.hermes_llm import ApprovalRequest, HermesLLM
+from examples.hermes_llm import ApprovalRequest, ApprovalResolution, HermesLLM
 from examples.minimal_agent import configured_ai, configured_provider, provider_choices
 from examples.startup_progress import STARTUP_MESSAGES
 
@@ -51,6 +51,31 @@ async def publish_approval(room: rtc.Room, owner: str, request: ApprovalRequest)
         reliable=True,
         destination_identities=[owner],
         topic="hermes.approval.request",
+    )
+
+
+async def publish_approval_resolution(
+    room: rtc.Room, owner: str, resolution: ApprovalResolution
+) -> None:
+    """Publish one exact approval resolution only to its owning participant."""
+    if (
+        not resolution.run_id
+        or len(resolution.run_id) > _MAX_APPROVAL_ID_CHARS
+        or not resolution.request_id
+        or len(resolution.request_id) > _MAX_APPROVAL_ID_CHARS
+    ):
+        raise ValueError("Hermes approval resolution is invalid.")
+    payload = json.dumps(
+        {"runId": resolution.run_id, "requestId": resolution.request_id},
+        separators=(",", ":"),
+    )
+    if len(payload.encode("utf-8")) > _MAX_APPROVAL_PAYLOAD_BYTES:
+        raise ValueError("Hermes approval resolution exceeds the transport limit.")
+    await room.local_participant.publish_data(
+        payload,
+        reliable=True,
+        destination_identities=[owner],
+        topic="hermes.approval.resolved",
     )
 
 
@@ -170,7 +195,12 @@ async def run() -> None:
         async def approval(request: ApprovalRequest) -> None:
             await publish_approval(room, owner, request)
 
-        speech, language_model = await configured_ai(on_approval=approval)
+        async def approval_resolved(resolution: ApprovalResolution) -> None:
+            await publish_approval_resolution(room, owner, resolution)
+
+        speech, language_model = await configured_ai(
+            on_approval=approval, on_approval_resolved=approval_resolved
+        )
         if provider_choices()[1] in ("copilot", "codex"):
             from examples.agent_llm import AgentLLM
 

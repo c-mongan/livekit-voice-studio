@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from examples import studio_worker
-from examples.hermes_llm import ApprovalRequest, HermesLLM
+from examples.hermes_llm import ApprovalRequest, ApprovalResolution, HermesLLM
 
 
 async def test_approval_request_is_bounded_and_targeted_to_owner() -> None:
@@ -31,6 +31,22 @@ async def test_approval_request_is_bounded_and_targeted_to_owner() -> None:
         "destination_identities": ["owner"],
         "topic": "hermes.approval.request",
     }
+
+
+async def test_approval_resolution_is_exact_reliable_and_targeted_to_owner() -> None:
+    participant = SimpleNamespace(publish_data=AsyncMock())
+    room = SimpleNamespace(local_participant=participant)
+
+    await studio_worker.publish_approval_resolution(
+        room, "owner", ApprovalResolution("run-1", "request-1")
+    )
+
+    participant.publish_data.assert_awaited_once_with(
+        '{"runId":"run-1","requestId":"request-1"}',
+        reliable=True,
+        destination_identities=["owner"],
+        topic="hermes.approval.resolved",
+    )
 
 
 @pytest.mark.parametrize(
@@ -128,6 +144,18 @@ async def test_rpc_registration_follows_connection_and_shutdown_drains(monkeypat
         published, publish_options = handlers["published"]
         assert json.loads(published)["command"] == "redacted"
         assert publish_options["destination_identities"] == ["user"]
+        assert resolution_callback is not None
+        await resolution_callback(ApprovalResolution("run-approval", "request-approval"))
+        resolved, resolution_options = handlers["published"]
+        assert json.loads(resolved) == {
+            "runId": "run-approval",
+            "requestId": "request-approval",
+        }
+        assert resolution_options == {
+            "reliable": True,
+            "destination_identities": ["user"],
+            "topic": "hermes.approval.resolved",
+        }
         approval_result = await handlers["hermes.approval.respond"](
             SimpleNamespace(
                 caller_identity="user",
@@ -222,10 +250,12 @@ async def test_rpc_registration_follows_connection_and_shutdown_drains(monkeypat
     model.respond_to_approval = AsyncMock()
     model.aclose = AsyncMock()
     approval_callback = None
+    resolution_callback = None
 
-    async def configure_ai(*, on_approval=None):
-        nonlocal approval_callback
+    async def configure_ai(*, on_approval=None, on_approval_resolved=None):
+        nonlocal approval_callback, resolution_callback
         approval_callback = on_approval
+        resolution_callback = on_approval_resolved
         return speech, model
 
     monkeypatch.setattr(studio_worker.rtc, "Room", Room)

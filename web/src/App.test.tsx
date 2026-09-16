@@ -419,6 +419,12 @@ describe('Hermes approval flow', () => {
     ));
   }
 
+  async function resolve(value: object, sender = testGrant.agentIdentity) {
+    await act(async () => mocks.roomHandlers.dataReceived(
+      new TextEncoder().encode(JSON.stringify(value)), { identity: sender }, 0, 'hermes.approval.resolved',
+    ));
+  }
+
   it('accepts requests only from the granted agent and sends exact owner RPC data', async () => {
     connect();
     await mount();
@@ -439,14 +445,40 @@ describe('Hermes approval flow', () => {
     expect(host.textContent).not.toContain('rm redacted-file');
   });
 
-  it('clears the matching approval when a run becomes terminal', async () => {
+  it('clears only the exact approval named by a terminal event', async () => {
     connect();
-    mocks.agent.state = 'thinking';
     await mount();
     await receive(approval);
     expect(host.textContent).toContain('rm redacted-file');
-    await act(async () => { mocks.agent.state = 'listening'; render(); });
+    await resolve({ runId: approval.runId, requestId: approval.requestId, extra: true });
+    await resolve({ runId: approval.runId, requestId: approval.requestId }, 'other-participant');
+    expect(host.textContent).toContain('rm redacted-file');
+    await resolve({ runId: approval.runId, requestId: approval.requestId });
     expect(host.textContent).not.toContain('rm redacted-file');
+  });
+
+  it('keeps a newer approval when a stale terminal event names an old request', async () => {
+    connect();
+    await mount();
+    await receive({ ...approval, requestId: 'request-new', command: 'new bounded command' });
+    await resolve({ runId: approval.runId, requestId: 'request-old' });
+    expect(host.textContent).toContain('new bounded command');
+  });
+
+  it('does not resurrect a delayed approval delivered after its terminal event', async () => {
+    connect();
+    await mount();
+    await resolve({ runId: approval.runId, requestId: approval.requestId });
+    await receive(approval);
+    expect(host.textContent).not.toContain('rm redacted-file');
+  });
+
+  it('keeps the displayed approval when a terminal event belongs to another run', async () => {
+    connect();
+    await mount();
+    await receive(approval);
+    await resolve({ runId: 'other-run', requestId: approval.requestId });
+    expect(host.textContent).toContain('rm redacted-file');
   });
 });
 

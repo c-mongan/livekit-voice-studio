@@ -10,7 +10,7 @@ import pytest
 from livekit.agents import APIConnectOptions, APIError, llm
 
 from examples.hermes_api import HermesAPIError, RunEvent, RunHandle
-from examples.hermes_llm import ApprovalRequest, HermesLLM, _RunState
+from examples.hermes_llm import ApprovalRequest, ApprovalResolution, HermesLLM, _RunState
 
 
 class FakeClient:
@@ -332,6 +332,7 @@ async def test_nonlocal_terminal_failures_are_sanitized(client: FakeClient, term
 
 async def test_approval_is_forwarded_exactly_without_becoming_speech(client: FakeClient) -> None:
     on_approval = AsyncMock()
+    on_resolved = AsyncMock()
     client.runs = [
         [
             RunEvent(
@@ -346,12 +347,15 @@ async def test_approval_is_forwarded_exactly_without_becoming_speech(client: Fak
             RunEvent("run.completed", {"run_id": "run_1", "status": "completed"}),
         ]
     ]
-    model = HermesLLM(client=client, on_approval=on_approval)
+    model = HermesLLM(
+        client=client, on_approval=on_approval, on_approval_resolved=on_resolved
+    )
 
     assert await collect(model.chat(chat_ctx=context(("user", "one")))) == []
     on_approval.assert_awaited_once_with(
         ApprovalRequest("run_1", "req_1", "rm redacted-file", ("once", "deny"))
     )
+    on_resolved.assert_awaited_once_with(ApprovalResolution("run_1", "req_1"))
 
 
 async def test_callback_api_error_is_fully_sanitized(
@@ -418,7 +422,10 @@ async def test_approval_response_requires_current_exact_request_and_choice(
         yield RunEvent("run.completed", {"run_id": "run_1", "status": "completed"})
 
     client.events = events  # type: ignore[method-assign]
-    model = HermesLLM(client=client, on_approval=AsyncMock())
+    on_resolved = AsyncMock()
+    model = HermesLLM(
+        client=client, on_approval=AsyncMock(), on_approval_resolved=on_resolved
+    )
     stream = model.chat(chat_ctx=context(("user", "one")))
     task = asyncio.create_task(collect(stream))
     await approval_seen.wait()
@@ -433,6 +440,7 @@ async def test_approval_response_requires_current_exact_request_and_choice(
     with pytest.raises(APIError, match="approval request"):
         await model.respond_to_approval("run_1", "req_1", "once")
     assert client.approvals == [("run_1", "req_1", "once")]
+    on_resolved.assert_awaited_once_with(ApprovalResolution("run_1", "req_1"))
     continue_events.set()
     await task
     with pytest.raises(APIError, match="approval request"):

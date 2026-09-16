@@ -32,6 +32,12 @@ class ApprovalRequest:
     choices: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class ApprovalResolution:
+    run_id: str
+    request_id: str
+
+
 @dataclass
 class _RunState:
     run_id: str
@@ -60,6 +66,7 @@ class HermesLLM(llm.LLM[Never]):
         *,
         client: HermesRunsClient,
         on_approval: Callable[[ApprovalRequest], Awaitable[None]],
+        on_approval_resolved: Callable[[ApprovalResolution], Awaitable[None]] | None = None,
         max_response_chars: int = 32_000,
     ) -> None:
         super().__init__()
@@ -67,6 +74,7 @@ class HermesLLM(llm.LLM[Never]):
             raise ValueError("max_response_chars must be positive.")
         self._client = client
         self._on_approval = on_approval
+        self._on_approval_resolved = on_approval_resolved
         self._max_response_chars = max_response_chars
         self._run_lock = asyncio.Lock()
         self._generation = 0
@@ -136,6 +144,7 @@ class HermesLLM(llm.LLM[Never]):
             raise
         except Exception:
             raise _error("Hermes approval response failed.") from None
+        await self._notify_resolution(state.run_id, request_id)
 
     async def stop_active(self) -> bool:
         state = self._active
@@ -170,7 +179,7 @@ class HermesLLM(llm.LLM[Never]):
                         value = status.get("status")
                         if isinstance(value, str) and value in _TERMINAL_STATES:
                             state.terminal = True
-                            self._clear_approvals(state)
+                            await self._clear_approvals(state)
                             return True
                         await asyncio.sleep(min(0.01, timeout / 10))
             except asyncio.CancelledError:
@@ -180,10 +189,32 @@ class HermesLLM(llm.LLM[Never]):
                 self._uncertain = True
                 return False
 
-    def _clear_approvals(self, state: _RunState) -> None:
-        for request_id, (owner, _choices) in list(self._pending_approvals.items()):
-            if owner is state:
-                self._pending_approvals.pop(request_id, None)
+    async def _notify_resolution(self, run_id: str, request_id: str) -> None:
+        if self._on_approval_resolved is None:
+            return
+        try:
+            await self._on_approval_resolved(ApprovalResolution(run_id, request_id))
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            raise _error("Hermes approval resolution could not be published.") from None
+
+    async def _clear_approvals(self, state: _RunState) -> None:
+        request_ids = [
+            request_id
+            for request_id, (owner, _choices) in self._pending_approvals.items()
+            if owner is state
+        ]
+        for request_id in request_ids:
+            self._pending_approvals.pop(request_id, None)
+        failed = False
+        for request_id in request_ids:
+            try:
+                await self._notify_resolution(state.run_id, request_id)
+            except _AdapterAPIError:
+                failed = True
+        if failed:
+            raise _error("Hermes approval resolutions could not be published.")
 
     async def aclose(self) -> None:
         try:
@@ -261,7 +292,7 @@ class _HermesStream(llm.LLMStream):
             if event_terminal is not None:
                 terminal = event_terminal
                 state.terminal = True
-                owner._clear_approvals(state)
+                await owner._clear_approvals(state)
                 break
             if state.stop_requested:
                 continue
@@ -286,6 +317,7 @@ class _HermesStream(llm.LLMStream):
                     pending = owner._pending_approvals.get(request_id)
                     if pending is not None and pending[0] is state:
                         owner._pending_approvals.pop(request_id, None)
+                        await owner._notify_resolution(state.run_id, request_id)
 
         if terminal is None:
             status = await owner._client.status(state.run_id)
@@ -293,7 +325,7 @@ class _HermesStream(llm.LLMStream):
             if isinstance(value, str) and value in _TERMINAL_STATES:
                 terminal = value
                 state.terminal = True
-                owner._clear_approvals(state)
+                await owner._clear_approvals(state)
             else:
                 raise _error("Hermes event stream ended before terminal acknowledgement.")
         if terminal == "completed":
@@ -342,6 +374,6 @@ class _HermesStream(llm.LLMStream):
                     await owner._stop_and_wait(state)
                 raise _error("Hermes run failed.") from None
             finally:
-                owner._clear_approvals(state)
+                await owner._clear_approvals(state)
                 if owner._active is state and owner._generation == generation:
                     owner._active = None

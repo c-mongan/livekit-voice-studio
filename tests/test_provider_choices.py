@@ -84,8 +84,11 @@ async def test_hermes_reasoning_keeps_nemotron_independent_and_preflights(monkey
     monkeypatch.setattr(module, "HermesRunsClient", client_constructor, raising=False)
     monkeypatch.setattr(module, "HermesLLM", model_constructor, raising=False)
     approval = AsyncMock()
+    resolved = AsyncMock()
 
-    selected_speech, selected_model = await module.configured_ai(on_approval=approval)
+    selected_speech, selected_model = await module.configured_ai(
+        on_approval=approval, on_approval_resolved=resolved
+    )
 
     assert selected_speech is speech
     assert selected_model is model
@@ -95,7 +98,11 @@ async def test_hermes_reasoning_keeps_nemotron_independent_and_preflights(monkey
     assert config.profile == "voice-profile"
     assert config.session_id == "voice-session"
     client.preflight.assert_awaited_once_with()
-    assert model_constructor.call_args.kwargs == {"client": client, "on_approval": approval}
+    assert model_constructor.call_args.kwargs == {
+        "client": client,
+        "on_approval": approval,
+        "on_approval_resolved": resolved,
+    }
 
 
 async def test_hermes_default_approval_callback_fails_closed(monkeypatch):

@@ -8,6 +8,11 @@ export interface HermesApprovalRequest {
 export type HermesApprovalChoice = 'once' | 'session' | 'always' | 'deny';
 const HERMES_APPROVAL_CHOICES = new Set<HermesApprovalChoice>(['once', 'session', 'always', 'deny']);
 
+export interface HermesApprovalResolution {
+  runId: string;
+  requestId: string;
+}
+
 export function parseHermesApprovalRequest(payload: Uint8Array): HermesApprovalRequest | null {
   if (payload.byteLength > 4096) return null;
   let value: unknown;
@@ -39,6 +44,30 @@ export function parseHermesApprovalRequest(payload: Uint8Array): HermesApprovalR
     || new Set(record.choices).size !== record.choices.length
   ) return null;
   return record as unknown as HermesApprovalRequest;
+}
+
+export function parseHermesApprovalResolution(payload: Uint8Array): HermesApprovalResolution | null {
+  if (payload.byteLength > 4096) return null;
+  let value: unknown;
+  try {
+    value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(payload));
+  } catch {
+    return null;
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (
+    Object.keys(record).length !== 2
+    || !Object.hasOwn(record, 'runId')
+    || !Object.hasOwn(record, 'requestId')
+    || typeof record.runId !== 'string'
+    || !record.runId
+    || record.runId.length > 200
+    || typeof record.requestId !== 'string'
+    || !record.requestId
+    || record.requestId.length > 200
+  ) return null;
+  return record as unknown as HermesApprovalResolution;
 }
 
 export interface StudioStatus {

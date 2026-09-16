@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type CSSProperties, type Form
 import { StartAudio, useLocalParticipant, useMultibandTrackVolume, useSessionMessages } from '@livekit/components-react';
 import { RoomEvent, type RemoteParticipant } from 'livekit-client';
 import { AgentSessionProvider } from './components/agent-session-provider';
-import { parseHermesApprovalRequest, measuredSeconds, safeMessage, type HermesApprovalChoice, type HermesApprovalRequest, type StudioStatus } from './api';
+import { parseHermesApprovalRequest, parseHermesApprovalResolution, measuredSeconds, safeMessage, type HermesApprovalChoice, type HermesApprovalRequest, type StudioStatus } from './api';
 import { HermesApproval } from './HermesApproval';
 import { MAX_MESSAGE_LENGTH, mergeTranscript, validMessage, workspaceState, type TranscriptMessage, type WorkspaceState } from './state';
 import { useStudio } from './useStudio';
@@ -95,7 +95,7 @@ function Workspace({ studio, setMuted }: { studio: Studio; setMuted: (muted: boo
   const [messages, setMessages] = useState<TranscriptMessage[]>([]);
   const [announcement, setAnnouncement] = useState('');
   const [approval, setApproval] = useState<HermesApprovalRequest | null>(null);
-  const previousAgentState = useRef(agent.state);
+  const resolvedApprovals = useRef(new Set<string>());
   const cleared = useRef(new Set<string>());
   const sendingRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -119,32 +119,45 @@ function Workspace({ studio, setMuted }: { studio: Studio; setMuted: (muted: boo
   const streaming = mlx && status?.voice.streaming === true;
 
   useEffect(() => {
-    const receiveApproval = (
+    const receiveApprovalEvent = (
       payload: Uint8Array,
       participant?: RemoteParticipant,
       _kind?: unknown,
       topic?: string,
     ) => {
-      if (topic !== 'hermes.approval.request' || participant?.identity !== grant?.agentIdentity) return;
-      const request = parseHermesApprovalRequest(payload);
-      if (request) setApproval(request);
+      if (participant?.identity !== grant?.agentIdentity) return;
+      if (topic === 'hermes.approval.request') {
+        const request = parseHermesApprovalRequest(payload);
+        if (request && !resolvedApprovals.current.has(`${request.runId}\u0000${request.requestId}`)) {
+          setApproval(request);
+        }
+        return;
+      }
+      if (topic === 'hermes.approval.resolved') {
+        const resolution = parseHermesApprovalResolution(payload);
+        if (!resolution) return;
+        const key = `${resolution.runId}\u0000${resolution.requestId}`;
+        resolvedApprovals.current.add(key);
+        if (resolvedApprovals.current.size > 128) {
+          const oldest = resolvedApprovals.current.values().next().value;
+          if (oldest !== undefined) resolvedApprovals.current.delete(oldest);
+        }
+        setApproval((current) => (
+          current?.runId === resolution.runId && current.requestId === resolution.requestId
+            ? null
+            : current
+        ));
+      }
     };
-    session.room.on(RoomEvent.DataReceived, receiveApproval);
-    return () => { session.room.off(RoomEvent.DataReceived, receiveApproval); };
+    session.room.on(RoomEvent.DataReceived, receiveApprovalEvent);
+    return () => { session.room.off(RoomEvent.DataReceived, receiveApprovalEvent); };
   }, [grant?.agentIdentity, session.room]);
 
   useEffect(() => {
-    const previous = previousAgentState.current;
-    previousAgentState.current = agent.state;
-    if (
-      approval
-      && ['thinking', 'speaking'].includes(previous)
-      && ['listening', 'failed', 'disconnected'].includes(agent.state)
-    ) setApproval(null);
-  }, [agent.state]); // approval intentionally excluded: only a later terminal transition clears it.
-
-  useEffect(() => {
-    if (!grant || session.connectionState === 'disconnected') setApproval(null);
+    if (!grant || session.connectionState === 'disconnected') {
+      setApproval(null);
+      resolvedApprovals.current.clear();
+    }
   }, [grant, session.connectionState]);
 
   const respondToApproval = useCallback(async (

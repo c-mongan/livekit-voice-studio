@@ -2,7 +2,7 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { parseHermesApprovalRequest, type HermesApprovalRequest } from './api';
+import { parseHermesApprovalRequest, parseHermesApprovalResolution, type HermesApprovalRequest } from './api';
 import { HermesApproval } from './HermesApproval';
 import { deferred } from './test-fixtures';
 
@@ -44,6 +44,14 @@ describe('approval payload validation', () => {
     expect(parseHermesApprovalRequest(new TextEncoder().encode(JSON.stringify({ ...request, command: 'x'.repeat(501) })))).toBeNull();
     expect(parseHermesApprovalRequest(new TextEncoder().encode(JSON.stringify({ ...request, choices: ['once', 'free text'] })))).toBeNull();
     expect(parseHermesApprovalRequest(new Uint8Array(4097))).toBeNull();
+  });
+
+  it('accepts only exact bounded resolution identifiers', () => {
+    const resolution = { runId: 'run-1', requestId: 'request-1' };
+    expect(parseHermesApprovalResolution(new TextEncoder().encode(JSON.stringify(resolution)))).toEqual(resolution);
+    expect(parseHermesApprovalResolution(new TextEncoder().encode(JSON.stringify({ ...resolution, state: 'done' })))).toBeNull();
+    expect(parseHermesApprovalResolution(new TextEncoder().encode(JSON.stringify({ ...resolution, requestId: 'x'.repeat(201) })))).toBeNull();
+    expect(parseHermesApprovalResolution(new Uint8Array(4097))).toBeNull();
   });
 });
 
