@@ -1,10 +1,10 @@
 # Voicebox Studio
 
-Talk with **GitHub Copilot or OpenAI Codex** using a voice you've recorded or have permission to use.
+Talk with **Hermes** using a voice you've recorded or have permission to use.
 
 Record a short reference, hear it say something new, then start a conversation.
-Speech recognition and generation run on your Mac; you choose the service that
-answers. The Voicebox desktop app can stay closed.
+Speech recognition and generation run on your Mac; Hermes is the recommended
+reasoning, tool, memory, and approval path. The Voicebox desktop app can stay closed.
 
 ![Voicebox Studio: voice setup, conversation and optional pipeline details](docs/studio.png)
 
@@ -17,6 +17,7 @@ provider require your own accounts.
 
 Synthetic spoken tests cover replies, deliberate interruption, pauses and recovery.
 One earlier intermittent provider failure remains unexplained; response speed varies.
+The opt-in Hermes live vertical slice has not been run and remains a release gate.
 Human listening and an independent user installation are still needed. See the
 [preview release notes](docs/preview-release.md) for tested scope and limitations.
 
@@ -31,16 +32,20 @@ verification checklist. It cannot supply accounts, bypass permissions, or guaran
 compatibility with every machine. Prefer the manual guide below if you want to
 run each step yourself.
 
-## Copilot or Codex?
+## Reasoning providers
 
 | Reasoning provider | What has been verified |
 | --- | --- |
+| Hermes (recommended) | Deterministic bridge, stop, stale-delta, approval, and ownership contracts; real live room verification is still outstanding |
 | GitHub Copilot | Complete spoken conversations, interruption and follow-up with local speech |
 | OpenAI Codex | Restricted-agent preflight and two-turn reasoning/memory; full Codex speech pipeline still unverified |
 
-Both generate conversation replies; local Nemotron recognizes speech and Qwen
-speaks it. You need your own compatible account and installed CLI. Copilot uses
-no tools; Codex requires a separate restricted-agent consent step. See
+Hermes owns reasoning, tools, memory, sessions, permissions, and action state;
+Studio sends it text and receives streamed reply text. Approval is click/tap only:
+voice cannot authorize an action. Copilot, Codex, Azure OpenAI, and OpenAI remain
+legacy alternatives pending a later deprecation decision. You need your own
+compatible account or service. Copilot uses no tools; Codex requires a separate
+restricted-agent consent step. See
 [provider setup and boundaries](docs/agent-providers.md).
 
 ## Get started
@@ -51,8 +56,8 @@ You'll also need:
 
 - Qwen TTS 0.6B weights and the Nemotron CPU recognizer, installed explicitly.
 - A voice you own or have permission to use.
-- A LiveKit project and a supported reasoning account: Copilot, Codex,
-  Azure OpenAI or OpenAI.
+- A LiveKit project and a supported reasoning service. Hermes is recommended;
+  Copilot, Codex, Azure OpenAI, and OpenAI remain available as legacy alternatives.
 
 **New installation? Follow the [first-run guide](docs/quickstart.md).**
 It covers dependencies, model downloads, disk space and private configuration.
@@ -85,13 +90,14 @@ between sessions. The microphone stays off until you enable it.
 | Stage | Default route |
 | --- | --- |
 | Listen | Nemotron turns speech into text on your Mac |
-| Answer | Copilot receives conversation text and uses a remote model |
+| Answer | Hermes receives conversation text and routes it through its configured model |
 | Speak | Qwen generates audio locally from your selected voice |
 | Connect | LiveKit carries conversation audio and coordinates the room |
 
-**Local-first is not fully offline.** Reference recordings stay on your machine;
-live conversation audio travels through LiveKit and text goes to the reasoning
-provider. Choosing cloud transcription also sends speech to that provider.
+**Local speech is not fully offline.** Reference recordings stay on your machine;
+live conversation audio travels through LiveKit and text goes to Hermes or the
+selected legacy reasoning provider. Choosing cloud transcription also sends speech
+to that provider.
 Session recording is disabled, and the page keeps transcripts in memory rather
 than browser storage. Provider-side retention depends on your account and terms.
 
@@ -104,6 +110,10 @@ Local auditions and [read-aloud](docs/read-aloud.md) don't need a reasoning requ
 or LiveKit. Read-aloud can speak a short excerpt of an existing reply, including
 an opt-in Codex notification, with Stop and mute controls.
 
+Stopping speech stops playback and requests cancellation of the active Hermes run;
+it does not undo a tool or external action that already completed. The UI therefore
+reports **Stopped speaking**, never **Action undone**.
+
 [Current standalone validation and remaining checks](docs/oss-readiness.md)
 
 ## Status and limits
@@ -112,7 +122,8 @@ This is an **experimental, single-user app**, not a production service.
 Keep it on loopback; don't expose the token broker through a public tunnel.
 One conversation or audition owns inference at a time.
 
-The fast voice path and managed launcher are tested on Apple Silicon.
+The fast voice path and managed launcher are currently limited to Apple Silicon,
+and the local Nemotron path is English-only.
 Voice likeness, accents, noisy microphones and performance on other hardware
 need your own testing. Start with the [listening checklist](docs/voice-quality.md).
 See [compatibility and measured results](COMPATIBILITY.md) for what was actually
@@ -128,6 +139,10 @@ require the Voicebox app or server. The separate
 [`livekit-plugins-voicebox` Python plugin](livekit-plugins-voicebox/README.md)
 supports the original Voicebox HTTP backend. No package or model weights are
 published with this repository.
+
+LiveKit Expressive Mode is planned, not shipped. It will require an explicitly
+selected supported cloud TTS provider; local Qwen does not implement that mode.
+No model weights or voice recordings are bundled with this repository.
 
 [Architecture](docs/architecture.md) · [Voice settings](docs/voices-and-providers.md) ·
 [Existing Voicebox imports](docs/voice-performance.md) · [Troubleshooting](docs/troubleshooting.md)

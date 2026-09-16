@@ -161,6 +161,31 @@ traceability, not an exhaustive legal clearance. No model weights are shipped.
 
 ## Remaining acceptance boundaries
 
+### Hermes voice companion verification status — 16 September 2026
+
+Hermes is now the recommended reasoning path. Deterministic tests cover the Runs
+API contract, streamed text filtering, exact-session continuity, owner-bound
+click/tap approvals, denial, stop-on-interruption, terminal reconciliation, stale
+delta rejection, and safe worker/model ownership cleanup. The opt-in harness at
+`tests/integration/test_hermes_studio_live.py` is disabled unless a separate
+`HERMES_STUDIO_LIVE=1` authorization and every required service credential, local
+model path, authorized voice bundle, and synthetic audio fixture are present. Its
+disabled path was verified without contacting LiveKit, Hermes, or loading models.
+
+The real Hermes/LiveKit/Nemotron/Qwen room test was **not run** in this verification
+pass because no authorization was granted for paid or private services. It remains
+an outstanding release gate. Until it passes, do not claim the Hermes voice mode
+has verified live approval, tool, interruption, latency, continuity, or drain
+behavior. In particular, deterministic coverage does not prove the Qwen warm P95
+≤350 ms or playback stop-to-silence ≤200 ms targets on real hardware.
+
+Local speech is not fully offline: LiveKit still transports room audio and Hermes
+routes text to its configured model. The current fast path is Apple Silicon and
+English-only. Approval is click/tap only, and “Stopped speaking” never means a
+completed action was undone. Expressive Mode is planned rather than shipped; local
+Qwen is not a LiveKit Expressive Mode provider. Releases bundle neither model
+weights nor voice recordings.
+
 Human microphone/listening and independent hardware/account validation cannot be
 substituted by agent-run tests. Preserve these limitations and the unresolved
 intermittent error in docs/preview-release.md. This is a developer preview, not a
