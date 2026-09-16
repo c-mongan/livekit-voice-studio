@@ -15,6 +15,7 @@ benchmark-results*.json
 web/node_modules/
 web/dist/
 .impeccable/
+.worktrees/
 .voicebox-agent-*/
 # Private references, generated recordings and separately installed model assets.
 voice.json
