@@ -11,9 +11,11 @@ const LABELS: Record<HermesApprovalChoice, string> = {
 export function HermesApproval({
   request,
   onRespond,
+  disabled = false,
 }: {
   request: HermesApprovalRequest;
   onRespond: (request: HermesApprovalRequest, choice: HermesApprovalChoice) => Promise<void>;
+  disabled?: boolean;
 }) {
   const [pending, setPending] = useState(false);
   const [result, setResult] = useState<{ kind: 'status' | 'alert'; message: string } | null>(null);
@@ -28,7 +30,7 @@ export function HermesApproval({
   }, [request.runId, request.requestId]);
 
   async function respond(choice: HermesApprovalChoice) {
-    if (pending) return;
+    if (pending || disabled) return;
     const requestKey = `${request.runId}\0${request.requestId}`;
     setPending(true);
     setResult(null);
@@ -49,7 +51,7 @@ export function HermesApproval({
     <div className="hermes-approval-actions">
       {request.choices.map((choice) => <button
         className={`button ${choice === 'deny' ? 'secondary' : 'primary'}`}
-        disabled={pending}
+        disabled={pending || disabled}
         key={choice}
         onClick={() => void respond(choice)}
         ref={choice === 'deny' ? deny : undefined}

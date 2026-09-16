@@ -140,7 +140,7 @@ async def test_model_close_stops_active_run_before_closing_client(client: FakeCl
     assert client.stopped == ["run_1"]
 
 
-async def test_model_close_surfaces_unacknowledged_active_run_after_client_close(
+async def test_model_close_surfaces_unacknowledged_active_run_without_closing_client(
     client: FakeClient,
 ) -> None:
     client.config.stop_timeout = 0.01
@@ -155,9 +155,93 @@ async def test_model_close_surfaces_unacknowledged_active_run_after_client_close
     with pytest.raises(APIError, match="terminal acknowledgement"):
         await model.aclose()
 
-    assert client.closed
+    assert not client.closed
     assert client.stopped == ["run_1"]
+    client.statuses["run_1"] = [{"status": "cancelled"}]
+    await model.aclose()
     await task
+    assert client.closed
+
+
+async def test_model_close_waits_for_admission_then_stops_before_closing(
+    client: FakeClient,
+) -> None:
+    admission_started = asyncio.Event()
+    release_admission = asyncio.Event()
+    order: list[str] = []
+
+    async def delayed_start(text: str, *, idempotency_key: str) -> RunHandle:
+        admission_started.set()
+        await release_admission.wait()
+        client.starts.append(
+            {"text": text, "idempotency_key": idempotency_key, "run_id": "run_1"}
+        )
+        return RunHandle("run_1")
+
+    async def stop(run_id: str) -> dict[str, object]:
+        order.append(f"stop:{run_id}")
+        client.stopped.append(run_id)
+        return {"run_id": run_id, "status": "stopping"}
+
+    async def close() -> None:
+        order.append("close")
+        client.closed = True
+
+    client.start = delayed_start  # type: ignore[method-assign]
+    client.stop = stop  # type: ignore[method-assign]
+    client.aclose = close  # type: ignore[method-assign]
+    client.runs = [[]]
+    client.block_events = True
+    client.statuses["run_1"] = [{"status": "cancelled"}]
+    model = HermesLLM(client=client, on_approval=AsyncMock())
+    task = asyncio.create_task(collect(model.chat(chat_ctx=context(("user", "one")))))
+    await admission_started.wait()
+
+    close_task = asyncio.create_task(model.aclose())
+    await asyncio.sleep(0)
+    assert not client.closed
+    release_admission.set()
+    await close_task
+    await task
+
+    assert order == ["stop:run_1", "close"]
+
+
+async def test_model_close_exposes_hanging_admission_without_closing_client(
+    client: FakeClient,
+) -> None:
+    client.config.stop_timeout = 0.01
+    admission_started = asyncio.Event()
+    release_admission = asyncio.Event()
+
+    async def hanging_start(text: str, *, idempotency_key: str) -> RunHandle:
+        admission_started.set()
+        await release_admission.wait()
+        client.starts.append(
+            {"text": text, "idempotency_key": idempotency_key, "run_id": "run_1"}
+        )
+        return RunHandle("run_1")
+
+    client.start = hanging_start  # type: ignore[method-assign]
+    client.runs = [[]]
+    client.block_events = True
+    client.statuses["run_1"] = [{"status": "cancelled"}]
+    model = HermesLLM(client=client, on_approval=AsyncMock())
+    task = asyncio.create_task(collect(model.chat(chat_ctx=context(("user", "one")))))
+    await admission_started.wait()
+
+    with pytest.raises(APIError, match="admission"):
+        await model.aclose()
+
+    assert not client.closed
+    with pytest.raises(APIError, match="uncertain"):
+        model.chat(chat_ctx=context(("user", "two")))
+
+    release_admission.set()
+    await asyncio.wait_for(model.aclose(), timeout=0.2)
+    await task
+    assert client.stopped == ["run_1"]
+    assert client.closed
 
 
 async def test_empty_user_turn_and_livekit_tools_are_rejected(client: FakeClient) -> None:
@@ -454,6 +538,37 @@ async def test_only_bounded_authoritative_tool_status_is_forwarded(client: FakeC
             {},
         ),
     ]
+
+
+async def test_tool_status_publication_failure_latches_adapter_uncertain(
+    client: FakeClient,
+) -> None:
+    client.runs = [[
+        RunEvent(
+            "tool.completed",
+            {
+                "run_id": "run_1",
+                "tool": "write_file",
+                "preview": "completed action",
+                "duration": 0.1,
+                "error": False,
+            },
+        )
+    ]]
+    client.statuses["run_1"] = [{"status": "cancelled"}]
+    model = HermesLLM(
+        client=client,
+        on_approval=AsyncMock(),
+        on_tool_status=AsyncMock(side_effect=RuntimeError("publish failed")),
+    )
+
+    with pytest.raises(APIError):
+        await collect(model.chat(chat_ctx=context(("user", "one"))))
+    with pytest.raises(APIError, match="uncertain"):
+        model.chat(chat_ctx=context(("user", "two")))
+
+    assert len(client.starts) == 1
+    assert client.stopped == ["run_1"]
 
 
 async def test_sse_eof_is_reconciled_with_one_status_poll(client: FakeClient) -> None:

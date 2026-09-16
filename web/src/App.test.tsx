@@ -334,6 +334,7 @@ describe('microphone, playback and lifecycle controls', () => {
 
   it('stop uses the granted RPC, mutes through acknowledgement, and states action truth', async () => {
     connect();
+    mocks.studio.status.ai.provider = 'hermes';
     mocks.agent.state = 'speaking';
     const ack = deferred<string>();
     mocks.local.localParticipant.performRpc.mockReturnValue(ack.promise);
@@ -366,6 +367,28 @@ describe('microphone, playback and lifecycle controls', () => {
     expect(host.textContent).toContain('Speech stopped. Any completed Hermes action remains completed.');
   });
 
+  it.each([
+    ['empty object', {}],
+    ['no captured run', { stoppedPlayback: true, hermesStopRequested: false, hermesTerminalAcknowledged: false, actionUndone: false, backendState: 'ready' }],
+    ['captured without terminal acknowledgement', { stoppedPlayback: true, hermesStopRequested: true, hermesTerminalAcknowledged: false, actionUndone: false, backendState: 'ready' }],
+  ])('fails closed for Hermes interrupt acknowledgement: %s', async (_label, acknowledgement) => {
+    connect();
+    mocks.studio.status.ai.provider = 'hermes';
+    mocks.agent.state = 'thinking';
+    mocks.local.localParticipant.performRpc.mockResolvedValueOnce(JSON.stringify(acknowledgement));
+    await mount();
+    await type('must stay blocked');
+
+    await click(button('Stop reply'));
+
+    expect(mocks.mute).toHaveBeenLastCalledWith(true);
+    expect(host.querySelector('.session-status')?.textContent).toContain('Needs attention');
+    expect(host.querySelector('[role=alert]')?.textContent).toContain('could not confirm Hermes stopped');
+    expect(button('Send').disabled).toBe(true);
+    expect(button('Turn mic on').disabled).toBe(true);
+    expect(button('End session').disabled).toBe(false);
+  });
+
   it('failed stop restores playback and gives an actionable End session fallback', async () => {
     connect();
     mocks.agent.state = 'thinking';
@@ -396,6 +419,7 @@ describe('microphone, playback and lifecycle controls', () => {
 
   it('fails closed when Hermes stop is requested without terminal acknowledgement', async () => {
     connect();
+    mocks.studio.status.ai.provider = 'hermes';
     mocks.agent.state = 'speaking';
     mocks.local.localParticipant.performRpc.mockResolvedValueOnce(JSON.stringify({
       stoppedPlayback: true,
@@ -524,6 +548,45 @@ describe('Hermes approval flow', () => {
 
     expect(host.querySelector('.hermes-actions')?.textContent).toContain('Completed');
     expect(host.querySelector('.hermes-actions')?.textContent).toContain('HERMES-LIVE-FIXTURE-7F31');
+  });
+
+  it('bounds tool event dedupe identifiers to the rendered 64-status window', async () => {
+    connect();
+    await mount();
+    for (let index = 1; index <= 65; index += 1) {
+      await receiveTool({
+        runId: 'run-tool', eventId: `run-tool:${index}`, phase: 'started', tool: 'read_file',
+        preview: `event-${index}`,
+      });
+    }
+    await receiveTool({
+      runId: 'run-tool', eventId: 'run-tool:1', phase: 'started', tool: 'read_file',
+      preview: 'event-1-replayed',
+    });
+
+    const statuses = host.querySelectorAll('.hermes-actions li');
+    expect(statuses).toHaveLength(64);
+    expect(statuses[statuses.length - 1]?.textContent).toContain('event-1-replayed');
+  });
+
+  it('blocks every interaction when microphone pause fails during approval', async () => {
+    connect();
+    mocks.local.isMicrophoneEnabled = true;
+    mocks.local.localParticipant.setMicrophoneEnabled.mockRejectedValueOnce(new Error('device secret'));
+    await mount();
+    await type('must stay blocked');
+
+    await receive(approval);
+
+    expect(mocks.mute).toHaveBeenLastCalledWith(true);
+    expect(host.querySelector('.session-status')?.textContent).toContain('Needs attention');
+    expect(host.querySelector('[role=alert]')?.textContent).toContain('could not be paused');
+    expect(host.textContent).not.toContain('device secret');
+    expect(button('Send').disabled).toBe(true);
+    expect(button('Turn mic off').disabled).toBe(true);
+    expect(button('Allow once').disabled).toBe(true);
+    expect(button('Deny').disabled).toBe(true);
+    expect(button('End session').disabled).toBe(false);
   });
 
   it('clears only the exact approval named by a terminal event', async () => {

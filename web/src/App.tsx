@@ -156,7 +156,12 @@ function Workspace({ studio, setMuted }: { studio: Studio; setMuted: (muted: boo
         const toolStatus = parseHermesToolStatus(payload);
         if (!toolStatus || toolEventIds.current.has(toolStatus.eventId)) return;
         toolEventIds.current.add(toolStatus.eventId);
-        setToolStatuses((current) => [...current, toolStatus].slice(-64));
+        setToolStatuses((current) => {
+          const next = [...current, toolStatus].slice(-64);
+          toolEventIds.current.clear();
+          for (const item of next) toolEventIds.current.add(item.eventId);
+          return next;
+        });
       }
     };
     session.room.on(RoomEvent.DataReceived, receiveApprovalEvent);
@@ -177,7 +182,7 @@ function Workspace({ studio, setMuted }: { studio: Studio; setMuted: (muted: boo
     request: HermesApprovalRequest,
     choice: HermesApprovalChoice,
   ) => {
-    if (!grant) throw new Error('No owned session.');
+    if (!grant || unsafeStop) throw new Error('Approval interaction is blocked.');
     const response = await local.localParticipant.performRpc({
       destinationIdentity: grant.agentIdentity,
       method: 'hermes.approval.respond',
@@ -193,7 +198,7 @@ function Workspace({ studio, setMuted }: { studio: Studio; setMuted: (muted: boo
       || Object.keys(acknowledgement).length !== 1
       || (acknowledgement as Record<string, unknown>).accepted !== true
     ) throw new Error('Invalid acknowledgement.');
-  }, [grant, local.localParticipant]);
+  }, [grant, local.localParticipant, unsafeStop]);
 
 
   useEffect(() => {
@@ -254,6 +259,7 @@ function Workspace({ studio, setMuted }: { studio: Studio; setMuted: (muted: boo
   useEffect(() => {
     if (approval && micEnabled) {
       void local.localParticipant.setMicrophoneEnabled(false).catch(() => {
+        setUnsafeStop(true);
         studio.setError('The microphone could not be paused for approval. End the session before responding.');
       });
     }
@@ -295,15 +301,23 @@ function Workspace({ studio, setMuted }: { studio: Studio; setMuted: (muted: boo
         throw new Error('Invalid acknowledgement.');
       }
       const result = acknowledgement as Record<string, unknown>;
-      const hermesStopRequested = result.hermesStopRequested === true;
-      if (Object.keys(result).length > 0 && (
+      const hermes = status?.ai.provider === 'hermes';
+      const expectedKeys = new Set(['stoppedPlayback', 'hermesStopRequested', 'hermesTerminalAcknowledged', 'actionUndone', 'backendState']);
+      if (hermes && (
+        Object.keys(result).length !== expectedKeys.size
+        || Object.keys(result).some((key) => !expectedKeys.has(key))
+        || result.stoppedPlayback !== true
+        || typeof result.hermesStopRequested !== 'boolean'
+        || typeof result.hermesTerminalAcknowledged !== 'boolean'
+        || result.actionUndone !== false
+        || typeof result.backendState !== 'string'
+      )) throw new Error('Invalid acknowledgement.');
+      if (!hermes && Object.keys(result).length > 0 && (
         result.actionUndone !== false
         || result.stoppedPlayback !== true
         || typeof result.hermesStopRequested !== 'boolean'
-      )) {
-        throw new Error('Invalid acknowledgement.');
-      }
-      if (hermesStopRequested && result.hermesTerminalAcknowledged !== true) {
+      )) throw new Error('Invalid acknowledgement.');
+      if (hermes && result.hermesTerminalAcknowledged !== true) {
         setUnsafeStop(true);
         studio.setError('The agent could not confirm Hermes stopped. Sending and microphone input remain blocked; use End session.');
         return;
@@ -387,6 +401,7 @@ function Workspace({ studio, setMuted }: { studio: Studio; setMuted: (muted: boo
         {approval && <HermesApproval
           request={approval}
           onRespond={respondToApproval}
+          disabled={unsafeStop}
         />}
         {toolStatuses.length > 0 && <section className="hermes-actions" aria-labelledby="hermes-actions-title">
           <h2 id="hermes-actions-title">Hermes actions</h2>

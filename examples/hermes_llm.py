@@ -100,8 +100,12 @@ class HermesLLM(llm.LLM[Never]):
         self._on_tool_status = on_tool_status
         self._max_response_chars = max_response_chars
         self._run_lock = asyncio.Lock()
+        self._close_lock = asyncio.Lock()
         self._generation = 0
         self._active: _RunState | None = None
+        self._admission_task: asyncio.Task[_RunState] | None = None
+        self._admission_stop_requested = False
+        self._closing = False
         self._run_handle_owner = object()
         self._pending_approvals: dict[str, _PendingApproval] = {}
         self._uncertain = False
@@ -131,6 +135,8 @@ class HermesLLM(llm.LLM[Never]):
     def _check_ready(self) -> None:
         if self._uncertain:
             raise _error("Hermes conversation state is uncertain; create a new adapter.")
+        if self._closing:
+            raise _error("Hermes adapter is closing; create a new adapter.")
 
     def chat(
         self,
@@ -260,22 +266,62 @@ class HermesLLM(llm.LLM[Never]):
         if failed:
             raise _error("Hermes approval resolutions could not be published.")
 
-    async def aclose(self) -> None:
-        unsafe = False
-        state = self._active
+    async def _admit(self, request_text: str, generation: int) -> _RunState:
         try:
+            handle = await self._client.start(
+                request_text, idempotency_key=uuid.uuid4().hex
+            )
+        except asyncio.CancelledError:
+            self._uncertain = True
+            raise
+        except Exception:
+            raise _error("Hermes run could not be started.") from None
+
+        self._interruption_context_pending = False
+        state = _RunState(handle.run_id, generation)
+        self._active = state
+        if self._closing or self._admission_stop_requested:
+            state.stop_requested = True
+            if not await self._stop_and_wait(state):
+                self._uncertain = True
+        return state
+
+    async def aclose(self) -> None:
+        async with self._close_lock:
+            self._closing = True
+            admission = self._admission_task
+            if admission is not None and not admission.done():
+                self._admission_stop_requested = True
+                try:
+                    async with asyncio.timeout(self._client.config.stop_timeout):
+                        await asyncio.shield(admission)
+                except TimeoutError:
+                    self._uncertain = True
+                    raise _error(
+                        "Hermes run admission is uncertain; the client remains open for recovery."
+                    ) from None
+                except asyncio.CancelledError:
+                    self._uncertain = True
+                    raise
+                except Exception:
+                    # A definitive admission failure leaves no run to drain.
+                    pass
+
+            state = self._active
             if state is not None and not state.terminal:
                 state.stop_requested = True
-                unsafe = not await self._stop_and_wait(state)
+                if not await self._stop_and_wait(state):
+                    self._uncertain = True
+                    raise _error(
+                        "Hermes run closed without terminal acknowledgement; "
+                        "the client remains open for recovery."
+                    )
             await asyncio.gather(
                 *(stream.aclose() for stream in tuple(self._streams)),
                 return_exceptions=True,
             )
             await super().aclose()
-        finally:
             await self._client.aclose()
-        if unsafe:
-            raise _error("Hermes run closed without terminal acknowledgement.")
 
 
 class _HermesStream(llm.LLMStream):
@@ -373,17 +419,23 @@ class _HermesStream(llm.LLMStream):
         else:
             return
         state.status_sequence += 1
-        await callback(
-            ToolStatus(
-                state.run_id,
-                f"{state.run_id}:{state.status_sequence}",
-                phase,
-                tool,
-                preview,
-                duration,
-                error,
-            )
+        status = ToolStatus(
+            state.run_id,
+            f"{state.run_id}:{state.status_sequence}",
+            phase,
+            tool,
+            preview,
+            duration,
+            error,
         )
+        try:
+            await callback(status)
+        except asyncio.CancelledError:
+            self._owner._uncertain = True
+            raise
+        except Exception:
+            self._owner._uncertain = True
+            raise _error("Hermes tool status could not be published.") from None
 
     async def _consume(self, state: _RunState) -> None:
         owner = self._owner
@@ -460,20 +512,32 @@ class _HermesStream(llm.LLMStream):
             )
             owner._generation += 1
             generation = owner._generation
+            owner._admission_stop_requested = False
+            admission = asyncio.create_task(owner._admit(request_text, generation))
+            owner._admission_task = admission
             try:
-                handle = await owner._client.start(
-                    request_text, idempotency_key=uuid.uuid4().hex
-                )
-                owner._interruption_context_pending = False
+                state = await asyncio.shield(admission)
             except asyncio.CancelledError:
-                owner._uncertain = True
+                owner._admission_stop_requested = True
+                if admission.done() and not admission.cancelled():
+                    try:
+                        admitted = admission.result()
+                    except Exception:
+                        pass
+                    else:
+                        self._state = admitted
+                        admitted.stop_requested = True
+                        if not await owner._stop_and_wait(admitted):
+                            owner._uncertain = True
+                else:
+                    owner._uncertain = True
                 raise
-            except Exception:
-                raise _error("Hermes run could not be started.") from None
-
-            state = _RunState(handle.run_id, generation)
+            finally:
+                if admission.done() and owner._admission_task is admission:
+                    owner._admission_task = None
             self._state = state
-            owner._active = state
+            if state.stop_requested and state.terminal:
+                raise asyncio.CancelledError
             try:
                 async with asyncio.timeout(self._conn_options.timeout):
                     await self._consume(state)
