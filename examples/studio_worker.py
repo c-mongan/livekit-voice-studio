@@ -192,20 +192,24 @@ async def run() -> None:
                 raise rtc.RpcError(1403, "Only the session owner can stop this reply.")
             if session is None or provider is None:
                 raise rtc.RpcError(1503, "The conversation is not ready.")
-            await session.interrupt(force=True)
-            hermes_stop_requested = False
-            if isinstance(language_model, HermesLLM):
+            hermes_model = language_model if isinstance(language_model, HermesLLM) else None
+            hermes_run = hermes_model.capture_active_run() if hermes_model is not None else None
+            playback_stop = asyncio.ensure_future(session.interrupt(force=True))
+            hermes_stop: asyncio.Task[bool] | None = None
+            if hermes_run is not None and hermes_model is not None:
                 async with interrupt_lock:
-                    run_id = language_model.active_run_id
-                    if run_id is not None:
-                        if interrupted_run_id != run_id:
-                            await language_model.stop_active()
-                            interrupted_run_id = run_id
-                        hermes_stop_requested = True
+                    if interrupted_run_id != hermes_run.run_id:
+                        interrupted_run_id = hermes_run.run_id
+                        hermes_stop = asyncio.create_task(hermes_model.stop_run(hermes_run))
+            try:
+                await playback_stop
+            finally:
+                if hermes_stop is not None:
+                    await hermes_stop
             return json.dumps(
                 {
                     "stoppedPlayback": True,
-                    "hermesStopRequested": hermes_stop_requested,
+                    "hermesStopRequested": hermes_run is not None,
                     "actionUndone": False,
                     "backendState": provider.backend_state,
                 }

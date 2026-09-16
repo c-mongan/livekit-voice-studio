@@ -43,6 +43,15 @@ class _RunState:
     stop_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
+@dataclass(frozen=True)
+class HermesRunHandle:
+    """Opaque identity for one exact run owned by a HermesLLM instance."""
+
+    run_id: str
+    _state: _RunState = field(repr=False, compare=False)
+    _owner: object = field(repr=False, compare=False)
+
+
 class HermesLLM(llm.LLM[Never]):
     """Expose one Hermes run at a time through LiveKit's streaming LLM contract."""
 
@@ -62,6 +71,7 @@ class HermesLLM(llm.LLM[Never]):
         self._run_lock = asyncio.Lock()
         self._generation = 0
         self._active: _RunState | None = None
+        self._run_handle_owner = object()
         self._pending_approvals: dict[str, tuple[_RunState, tuple[str, ...]]] = {}
         self._uncertain = False
 
@@ -77,6 +87,12 @@ class HermesLLM(llm.LLM[Never]):
     def active_run_id(self) -> str | None:
         state = self._active
         return state.run_id if state is not None and not state.terminal else None
+
+    def capture_active_run(self) -> HermesRunHandle | None:
+        state = self._active
+        if state is None or state.terminal:
+            return None
+        return HermesRunHandle(state.run_id, state, self._run_handle_owner)
 
     def _check_ready(self) -> None:
         if self._uncertain:
@@ -119,6 +135,16 @@ class HermesLLM(llm.LLM[Never]):
     async def stop_active(self) -> bool:
         state = self._active
         if state is None:
+            return False
+        run = HermesRunHandle(state.run_id, state, self._run_handle_owner)
+        return await self.stop_run(run)
+
+    async def stop_run(self, run: HermesRunHandle) -> bool:
+        """Stop only the captured run, even if another run becomes active."""
+        if run._owner is not self._run_handle_owner:
+            return False
+        state = run._state
+        if state.run_id != run.run_id:
             return False
         state.stop_requested = True
         return await self._stop_and_wait(state)

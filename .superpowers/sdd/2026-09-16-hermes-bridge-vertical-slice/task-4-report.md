@@ -40,3 +40,12 @@ Complete. Studio now gives each Hermes-backed room a scoped `voice:<room-id>` se
 - `actionUndone` is always false, and the UI does not use cancellation language for external actions.
 - No production approval path was added; Task 3's default approval callback remains fail-closed.
 - No blocking correctness or security concern remains. The only observed warning is the pre-existing Vite chunk-size advisory.
+
+## Round 1 exact-run interruption race fix
+
+- Root cause: the worker awaited LiveKit playback interruption before reading `active_run_id`, allowing the interrupted run to retire or be replaced before the parameterless Hermes stop selected its target.
+- Added an opaque `HermesRunHandle` captured synchronously from the active adapter state and `stop_run(handle)`, which retains that exact state and rejects handles from another adapter. `stop_active()` keeps its prior idempotent and timeout/uncertain behavior by delegating to the exact-run operation.
+- The worker now captures the Hermes run before any await, starts playback interruption immediately, and starts one deduplicated exact-run stop concurrently. Wrong-owner rejection and `actionUndone: false` remain unchanged; no Task 5 approval behavior was added.
+- Regression coverage makes two concurrent owner interrupts begin against `run-1`, has LiveKit interruption replace the visible active run with `run-2` before completing, and proves `run-1` is stopped exactly once while the parameterless stop path never touches `run-2`.
+- TDD RED: the focused regression run failed in all 3 cases because `capture_active_run` did not exist and the worker never called the exact-run stop (`3 failed`).
+- GREEN verification: `uv run pytest tests/test_hermes_llm.py tests/test_studio_worker.py -q` — **28 passed**; `uv run ruff check .` — **passed**; `uv run mypy` — **passed**, 25 source files clean; `git diff --check` — **passed**.

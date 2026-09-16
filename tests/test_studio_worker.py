@@ -1,3 +1,4 @@
+import asyncio
 import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -47,13 +48,26 @@ async def test_rpc_registration_follows_connection_and_shutdown_drains(monkeypat
         async def disconnect(self):
             order.append("disconnect")
 
+    playback_started = asyncio.Event()
+    finish_playback = asyncio.Event()
+
     async def start(**kwargs):
         assert kwargs["record"] is False
         with pytest.raises(studio_worker.rtc.RpcError) as error:
             await handlers["rpc"](SimpleNamespace(caller_identity="another-participant"))
         assert error.value.code == 1403
-        result = json.loads(await handlers["rpc"](SimpleNamespace(caller_identity="user")))
-        repeated = json.loads(await handlers["rpc"](SimpleNamespace(caller_identity="user")))
+        first = asyncio.create_task(
+            handlers["rpc"](SimpleNamespace(caller_identity="user"))
+        )
+        repeated_call = asyncio.create_task(
+            handlers["rpc"](SimpleNamespace(caller_identity="user"))
+        )
+        await playback_started.wait()
+        await asyncio.sleep(0)
+        finish_playback.set()
+        result, repeated = [
+            json.loads(value) for value in await asyncio.gather(first, repeated_call)
+        ]
         assert result == repeated == {
             "stoppedPlayback": True,
             "hermesStopRequested": True,
@@ -69,9 +83,27 @@ async def test_rpc_registration_follows_connection_and_shutdown_drains(monkeypat
             raise RuntimeError("Unresolved backend")
 
     async def stop_hermes():
-        order.append("hermes-stop")
+        order.append(f"wrong-hermes-stop:{model.active_run_id}")
         # The RPC reports that a stop was requested, not that an external action was undone.
         return False
+
+    exact_stops = []
+
+    async def stop_exact(run):
+        exact_stops.append(run.run_id)
+        order.append(f"hermes-stop:{run.run_id}")
+        return False
+
+    interrupt_calls = 0
+
+    async def interrupt_playback(**_kwargs):
+        nonlocal interrupt_calls
+        interrupt_calls += 1
+        order.append("playback-stopped")
+        if interrupt_calls <= 2:
+            model.active_run_id = "run-2"
+            playback_started.set()
+            await finish_playback.wait()
 
     provider = SimpleNamespace(
         on=Mock(),
@@ -85,11 +117,17 @@ async def test_rpc_registration_follows_connection_and_shutdown_drains(monkeypat
         on=lambda name: lambda callback: callback,
         start=AsyncMock(side_effect=start),
         aclose=AsyncMock(),
-        interrupt=AsyncMock(side_effect=lambda **_: order.append("playback-stopped")),
+        interrupt=AsyncMock(side_effect=interrupt_playback),
     )
     speech = SimpleNamespace(aclose=AsyncMock())
     model = Mock(spec=HermesLLM)
     model.active_run_id = "run-1"
+    model.capture_active_run = Mock(
+        side_effect=lambda: SimpleNamespace(run_id=model.active_run_id)
+        if model.active_run_id is not None
+        else None
+    )
+    model.stop_run = AsyncMock(side_effect=stop_exact)
     model.stop_active = AsyncMock(side_effect=stop_hermes)
     model.aclose = AsyncMock()
     monkeypatch.setattr(studio_worker.rtc, "Room", Room)
@@ -118,12 +156,13 @@ async def test_rpc_registration_follows_connection_and_shutdown_drains(monkeypat
         "preemptive_generation": {"enabled": False},
     }
     assert order.index("connect") < order.index("rpc")
-    assert order.index("playback-stopped") < order.index("hermes-stop")
+    assert order.index("playback-stopped") < order.index("hermes-stop:run-1")
     assert order.index("provider-drained") < order.index("disconnect")
     assert reports[-1] == ("finished", {"safe": drain_succeeds})
     assert session.interrupt.await_count == 3
     session.interrupt.assert_awaited_with(force=True)
-    model.stop_active.assert_awaited_once_with()
+    assert exact_stops == ["run-1"]
+    model.stop_active.assert_not_awaited()
     assert studio_worker.AgentSession.call_args.kwargs["llm"] is model
     assert session.start.await_args.kwargs["agent"].instructions == (
         "Reply for speech: concise plain text unless detail is needed. "

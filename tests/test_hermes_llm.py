@@ -10,7 +10,7 @@ import pytest
 from livekit.agents import APIConnectOptions, APIError, llm
 
 from examples.hermes_api import HermesAPIError, RunEvent, RunHandle
-from examples.hermes_llm import ApprovalRequest, HermesLLM
+from examples.hermes_llm import ApprovalRequest, HermesLLM, _RunState
 
 
 class FakeClient:
@@ -222,6 +222,26 @@ async def test_stop_active_returns_acknowledgement_and_sends_stop_once(client: F
     assert await model.stop_active() is True
     assert await model.stop_active() is True
     assert client.stopped == ["run_1"]
+    await stream.aclose()
+
+
+async def test_captured_run_stop_does_not_follow_replaced_active_state(client: FakeClient) -> None:
+    client.runs = [[]]
+    client.block_events = True
+    client.statuses["run_1"] = [{"status": "cancelled"}]
+    model = HermesLLM(client=client, on_approval=AsyncMock())
+    stream = model.chat(chat_ctx=context(("user", "one")))
+    await client.started.wait()
+    captured = model.capture_active_run()
+    assert captured is not None
+
+    replacement = _RunState("run_2", 2)
+    model._active = replacement
+    assert await model.stop_run(captured) is True
+
+    assert client.stopped == ["run_1"]
+    assert replacement.stop_requested is False
+    model._active = None
     await stream.aclose()
 
 
