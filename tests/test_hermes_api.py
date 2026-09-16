@@ -207,6 +207,27 @@ async def test_events_reject_a_data_line_over_one_mib(server) -> None:
         await client.aclose()
 
 
+async def test_events_reject_aggregate_comment_frame_over_one_mib(server) -> None:
+    max_frame_bytes = 1024 * 1024
+    eof_data = b'data: {"event":"run.completed","status":"completed"}'
+    first_comment = b": " + b"x" * 400_000 + b"\n"
+    second_comment_size = max_frame_bytes - len(eof_data) + 1 - len(first_comment) - 3
+    second_comment = b": " + b"y" * second_comment_size + b"\n"
+    oversized_frame = first_comment + second_comment + eof_data
+    assert len(oversized_frame) == max_frame_bytes + 1
+
+    async def handle(request: web.Request) -> web.Response:
+        return web.Response(body=oversized_frame, content_type="text/event-stream")
+
+    client = make_client(await server(handle))
+    try:
+        with pytest.raises(HermesAPIError, match="frame exceeds 1 MiB"):
+            async for _event in client.events("run_1"):
+                pass
+    finally:
+        await client.aclose()
+
+
 async def test_events_poll_terminal_status_after_sse_eof(server) -> None:
     calls: list[str] = []
 

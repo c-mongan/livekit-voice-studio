@@ -225,11 +225,10 @@ class HermesRunsClient:
                 frame_bytes = 0
                 async for chunk in response.content.iter_chunked(64 * 1024):
                     buffer.extend(chunk)
-                    if len(buffer) > MAX_SSE_FRAME_BYTES and b"\n" not in buffer:
-                        raise HermesAPIError("Hermes SSE event line exceeds 1 MiB.")
                     while (newline := buffer.find(b"\n")) >= 0:
+                        wire_line_bytes = newline + 1
                         line = bytes(buffer[:newline])
-                        del buffer[: newline + 1]
+                        del buffer[:wire_line_bytes]
                         if line.endswith(b"\r"):
                             line = line[:-1]
                         if len(line) > MAX_SSE_FRAME_BYTES:
@@ -247,18 +246,20 @@ class HermesRunsClient:
                             data_lines = []
                             frame_bytes = 0
                             continue
+                        frame_bytes += wire_line_bytes
+                        if frame_bytes > MAX_SSE_FRAME_BYTES:
+                            raise HermesAPIError("Hermes SSE event frame exceeds 1 MiB.")
                         if line.startswith(b":") or not line.startswith(b"data:"):
                             continue
                         data = line[5:]
                         if data.startswith(b" "):
                             data = data[1:]
-                        frame_bytes += len(data)
-                        if frame_bytes > MAX_SSE_FRAME_BYTES:
-                            raise HermesAPIError("Hermes SSE event frame exceeds 1 MiB.")
                         data_lines.append(data)
-                if buffer:
                     if len(buffer) > MAX_SSE_FRAME_BYTES:
                         raise HermesAPIError("Hermes SSE event line exceeds 1 MiB.")
+                    if frame_bytes + len(buffer) > MAX_SSE_FRAME_BYTES:
+                        raise HermesAPIError("Hermes SSE event frame exceeds 1 MiB.")
+                if buffer:
                     if buffer.startswith(b"data:"):
                         data = bytes(buffer[5:])
                         if data.startswith(b" "):
