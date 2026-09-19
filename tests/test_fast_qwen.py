@@ -277,7 +277,13 @@ async def test_uncooperative_job_deadline_permanently_blocks_admission(harness: 
         release.wait(3)
         yield chunk()
 
-    owner = harness.create(Model(generate), request_timeout=0.08, drain_timeout=0.06)
+    model = Model(generate)
+    owner = harness.create(model, drain_timeout=0.06)
+    # This test targets stalled generation, not cold HTTP reference retrieval or
+    # initialization competing for its deliberately short foreground deadline.
+    await owner.prepare()
+    assert not model.calls
+    owner._request_timeout = 0.08
     stream = owner.synthesize("Hello")
     try:
         await eventually(entered.is_set)

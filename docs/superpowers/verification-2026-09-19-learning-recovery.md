@@ -55,3 +55,12 @@ services consistently; the component guide uses the current Connection & AI labe
 Full Python suite: 540 passed, 5 integration tests deselected. Ruff, formatting,
 mypy and diff checks passed. Independent review found no actionable issues and
 reran 31 targeted tests. Frontend and live inference were unchanged and not rerun.
+
+A subsequent Linux CI run exposed an existing test race in the uncooperative Qwen
+job test: its 80 ms generation deadline included cold HTTP reference retrieval
+and initialization, so generation could never begin. Injecting 150 ms of fixture
+HTTP delay reproduced the original failure. The test now prepares its fake model
+before applying the same 80 ms request/60 ms drain deadlines; the delayed fixture
+then passes. All unsafe-state, locking and rejected-admission assertions remain.
+Production code and timeouts are unchanged. All 49 Qwen tests and the full 540-test
+Python suite passed with the CI coverage option; Ruff/format/diff checks passed.
