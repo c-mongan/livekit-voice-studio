@@ -20,8 +20,18 @@ export interface StudioStatus {
     ttsFirstFrameSeconds: number | null;
     ttsAudioSeconds: number | null;
     llmFirstTokenSeconds: number | null;
+    endOfUtteranceSeconds?: number | null;
+    transcriptionDelaySeconds?: number | null;
   };
   message: string | null;
+  turns?: Array<{
+    id: string;
+    llmFirstTokenSeconds?: number;
+    ttsFirstFrameSeconds?: number;
+    ttsAudioSeconds?: number;
+    endOfUtteranceSeconds?: number;
+    transcriptionDelaySeconds?: number;
+  }>;
 }
 
 export interface SessionGrant {

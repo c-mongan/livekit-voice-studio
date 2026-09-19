@@ -13,8 +13,8 @@ flowchart LR
     S[Local Studio: tokens and session ownership]
     L[LiveKit: real-time room]
     A[Local agent: conversation]
-    STT[Azure Speech: audio to text]
-    LLM[Azure OpenAI: response text]
+    STT[Nemotron locally or configured cloud STT]
+    LLM[Configured remote reasoning provider]
     V[Local voice: Voicebox WAV or Qwen streaming]
     B -->|start / end| S
     S -->|create room and launch one agent| A

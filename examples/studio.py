@@ -16,6 +16,7 @@ import logging
 import math
 import os
 import platform
+import re
 import secrets
 import shutil
 import signal
@@ -42,6 +43,7 @@ from examples.minimal_agent import check_setup, configured_provider, provider_ch
 from examples.nemotron_service import NemotronService
 from examples.startup_progress import STARTUP_MESSAGES
 from examples.studio_library import GUIDED_TEXT, MAX_RECORDING_BYTES, LibraryError, StudioLibrary
+from examples.studio_setup import SetupChecks, SetupUnavailable
 
 ROOT = Path(__file__).resolve().parents[1]
 logger = logging.getLogger("voicebox.studio")
@@ -99,6 +101,7 @@ class Studio:
             "endOfUtteranceSeconds": None,
             "transcriptionDelaySeconds": None,
         }
+        self.turns: list[dict[str, str | float]] = []
         self.lock = asyncio.Lock()
         self.start_task: asyncio.Task[dict[str, Any]] | None = None
         self.closed = False
@@ -216,6 +219,7 @@ class Studio:
             # Session handles are control capabilities; never reveal another tab's handle.
             "session": None,
             "metrics": self.metrics.copy(),
+            "turns": [turn.copy() for turn in self.turns],
             "message": message,
         }
 
@@ -227,6 +231,7 @@ class Studio:
             self.clear_audition()
             self.message = None
             self.metrics = dict.fromkeys(self.metrics)
+            self.turns.clear()
             self.fast_loaded = False
             self.start_task = asyncio.create_task(self._create())
             self.start_task.add_done_callback(self._observe_task)
@@ -673,9 +678,11 @@ class Studio:
             self.message = str(data.get("message", "Agent failed."))[:240]
             if owned.kind == "audition":
                 owned.pcm.clear()
+                if owned.audition_state != "failed" or not owned.audition_message:
+                    owned.audition_message = self.message
                 owned.audition_state = "failed"
-                owned.audition_message = self.message
         elif event == "metrics":
+            values: dict[str, float] = {}
             for key in self.metrics:
                 value = data.get(key)
                 if (
@@ -685,6 +692,28 @@ class Studio:
                     and value >= 0
                 ):
                     self.metrics[key] = float(value)
+                    values[key] = float(value)
+            identifier = data.get("speechId")
+            if (
+                owned.kind == "room"
+                and values
+                and isinstance(identifier, str)
+                and re.fullmatch(r"[A-Za-z0-9_-]{1,128}", identifier)
+            ):
+                turn = next((item for item in self.turns if item["id"] == identifier), None)
+                if turn is None:
+                    turn = {"id": identifier}
+                    self.turns.append(turn)
+                    del self.turns[:-20]
+                for key, measurement in values.items():
+                    if key == "ttsAudioSeconds":
+                        total = float(turn.get(key, 0)) + measurement
+                        if math.isfinite(total):
+                            turn[key] = total
+                    elif key not in turn:
+                        # First observed latency for this speech; later TTS chunks
+                        # are not the first audible response. Never sum latencies.
+                        turn[key] = measurement
 
     async def _monitor(self, owned: OwnedSession) -> None:
         process = owned.process
@@ -779,6 +808,25 @@ class Studio:
                     else:
                         self.message = "Session ended because its time limit was reached."
                     if owned.kind == "audition":
+                        # A watchdog failure is not an explicit user cancellation.
+                        # Keep its reason on the result after safe worker drain.
+                        owned.audition_state = "failed"
+                        if self.phase == "starting" and now - owned.created > STARTUP_SECONDS:
+                            owned.audition_message = (
+                                "Voice sample startup timed out. "
+                                "Check local model readiness, then try again."
+                            )
+                        elif now - owned.heartbeat > HEARTBEAT_SECONDS:
+                            owned.audition_message = (
+                                "Voice sample stopped because the browser stopped responding. "
+                                "Keep Studio open and try again."
+                            )
+                        else:
+                            owned.audition_message = (
+                                "Voice sample generation reached its time limit. "
+                                "Try a shorter sample."
+                            )
+                        self.message = owned.audition_message
                         await self.end_audition(owned.id)
                     else:
                         await self.end(owned.id)
@@ -799,6 +847,7 @@ class Studio:
 
 
 STUDIO = web.AppKey("studio", Studio)
+SETUP_CHECKS = web.AppKey("setup_checks", SetupChecks)
 ORIGINS = web.AppKey("origins", set[str])
 
 
@@ -844,6 +893,13 @@ async def local_only(
         "frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
     )
     return response
+
+
+async def setup_handler(request: web.Request) -> web.Response:
+    try:
+        return web.json_response(await request.app[SETUP_CHECKS].get())
+    except SetupUnavailable as error:
+        return web.json_response({"error": str(error)}, status=503)
 
 
 async def status_handler(request: web.Request) -> web.Response:
@@ -996,6 +1052,7 @@ async def settings_handler(request: web.Request) -> web.Response:
             if library.settings()["sttProvider"] != "nemotron" and studio.recognizer_service:
                 await studio.recognizer_service.close()
             studio.metrics = dict.fromkeys(studio.metrics)
+            studio.turns.clear()
             studio.message = None
             studio._last_status_at = 0
         return web.json_response({**library.settings(), "providers": provider_options()})
@@ -1066,6 +1123,7 @@ async def voice_handler(request: web.Request) -> web.Response:
 def create_app(studio: Studio, *, port: int = 8765, assets: Path | None = None) -> web.Application:
     app = web.Application(middlewares=[local_only], client_max_size=MAX_RECORDING_BYTES + 8192)
     app[STUDIO] = studio
+    app[SETUP_CHECKS] = SetupChecks(ROOT)
     app[ORIGINS] = {
         f"http://127.0.0.1:{port}",
         f"http://localhost:{port}",
@@ -1073,6 +1131,7 @@ def create_app(studio: Studio, *, port: int = 8765, assets: Path | None = None) 
         "http://localhost:5173",
     }
     app.router.add_get("/api/status", status_handler)
+    app.router.add_get("/api/setup", setup_handler)
     app.router.add_post("/api/session", create_handler)
     app.router.add_post("/api/session/heartbeat", heartbeat_handler)
     app.router.add_post("/api/session/end", end_handler)

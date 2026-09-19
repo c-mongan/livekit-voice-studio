@@ -9,12 +9,15 @@ const presets: Record<string, { model: string; effort: string }> = {
   azure: { model: 'gpt-4.1-nano', effort: '' }, openai: { model: 'gpt-4.1-mini', effort: '' },
 };
 
-export function StudioSettings({ locked, onChanged, status, onAuditionBusy }: {
+export function StudioSettings({ locked, onChanged, status, onAuditionBusy, requestedTab, onRequestHandled, onOpen }: {
   locked: boolean; onChanged: () => void | Promise<void>; status?: StudioStatus | null;
   onAuditionBusy?: (busy: boolean) => void;
+  requestedTab?: 'providers' | 'voices' | null;
+  onRequestHandled?: () => void;
+  onOpen?: () => void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
-  const trigger = useRef<HTMLButtonElement>(null);
+  const trigger = useRef<HTMLElement | null>(null);
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<'providers' | 'voices'>('voices');
   const [config, setConfig] = useState<StudioConfig | null>(null);
@@ -50,6 +53,12 @@ export function StudioSettings({ locked, onChanged, status, onAuditionBusy }: {
     return () => { request.current++; };
   }, [open]);
   useEffect(() => {
+    if (requestedTab && !locked) {
+      if (!open) trigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      onOpen?.(); setTab(requestedTab); setOpen(true); onRequestHandled?.();
+    }
+  }, [requestedTab, locked, onRequestHandled]);
+  useEffect(() => {
     if (locked) {
       if (audition.busy || audition.url) audition.cancel();
       setEnrolling(false); setDeleting(null); setRenaming(null); setPreview(null);
@@ -71,6 +80,7 @@ export function StudioSettings({ locked, onChanged, status, onAuditionBusy }: {
   }
   const switchTab = (next: 'providers' | 'voices') => { if (!enrolling) { audition.cancel(); setFocusedVoice(null); setTab(next); setPreview(null); setDeleting(null); } };
   function openDrawer(next: 'providers' | 'voices', source: HTMLButtonElement) {
+    onOpen?.();
     trigger.current = source;
     setTab(next);
     setOpen(true);

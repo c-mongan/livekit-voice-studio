@@ -6,6 +6,8 @@ import { MAX_MESSAGE_LENGTH, mergeTranscript, validMessage, workspaceState, type
 import { useStudio } from './useStudio';
 import { useStudioAgent } from './useStudioAgent';
 import { StudioSettings } from './StudioSettings';
+import { SetupGuide } from './SetupGuide';
+import { MicrophoneCheck } from './MicrophoneCheck';
 
 type Studio = ReturnType<typeof useStudio>;
 const stateCopy: Record<WorkspaceState, string> = {
@@ -25,18 +27,33 @@ function Icon({ name, className = '' }: { name: 'mic' | 'send' | 'stop' | 'close
   return <svg className={`icon ${className}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;
 }
 
-function Pipeline({ status, online }: { status: StudioStatus | null; online: boolean }) {
-  const provider = { azure: 'Azure', openai: 'OpenAI', copilot: 'Copilot', codex: 'Codex' }[status?.ai.provider || 'azure'];
-  const speechProvider = status?.stt ? { nemotron: 'Nemotron', azure: 'Azure Speech', openai: 'OpenAI' }[status.stt.provider] : 'Azure Speech';
+function Pipeline({ status: lastStatus, online, connection, agentState, roomName, micEnabled, hasAgentAudio }: { status: StudioStatus | null; online: boolean; connection: string; agentState: string; roomName?: string; micEnabled: boolean; hasAgentAudio: boolean }) {
+  const status = online ? lastStatus : null;
+  const provider = status ? { azure: 'Azure', openai: 'OpenAI', copilot: 'Copilot', codex: 'Codex' }[status.ai.provider] : 'Not reported';
+  const speechProvider = status?.stt ? { nemotron: 'Nemotron', azure: 'Azure Speech', openai: 'OpenAI' }[status.stt.provider] : 'Not reported';
   const mlx = status?.voice.backend === 'mlx';
   const streaming = mlx && status?.voice.streaming === true;
   return <aside className="inspector" aria-label="Pipeline inspector">
     <div className="inspector-title"><h2>Your pipeline</h2><span className="local-label">Local agent</span></div>
     <p className="inspector-intro">Three stages. One conversation.</p>
+    <details className="learn-lesson"><summary>Rooms, tracks and controls</summary>
+      <p>A room connects participants: this browser and your local agent. Each microphone or speaker stream is an audio track.</p>
+      <dl className="detail-list">
+        <div><dt>Browser connection</dt><dd>{connection}</dd></div>
+        <div><dt>Agent state</dt><dd>{agentState}</dd></div>
+        <div><dt>Your microphone</dt><dd>{micEnabled ? 'On' : 'Off'}</dd></div>
+        <div><dt>Agent audio track</dt><dd>{hasAgentAudio ? 'Available' : 'Not available'}</dd></div>
+        <div><dt>Your room</dt><dd>{roomName || 'Start a session to join'}</dd></div>
+      </dl>
+      <p>Try typing with your microphone off. Text uses LiveKit’s chat channel; it skips speech recognition.</p>
+      <p>During a reply, press Stop reply. The browser sends an owner-checked RPC: a request asking the agent to interrupt. Muting playback and stopping model computation are separate operations.</p>
+      <p>Studio starts one local agent process for your room. A managed agent server instead receives dispatched jobs.</p>
+      <a href="https://docs.livekit.io/transport/data/rpc/" target="_blank" rel="noreferrer">Explore LiveKit RPC ↗</a>
+    </details>
     <ol className="pipeline">
-      <li><span className="stage-number">1</span><div><h3>Listen</h3><p>{speechProvider}</p><span>Speech → text · {status?.stt?.local ? 'Local' : 'Cloud'}</span></div></li>
+      <li><span className="stage-number">1</span><div><h3>Listen</h3><p>{speechProvider}</p><span>Speech → text · {status?.stt ? status.stt.local ? 'Local' : 'Cloud' : 'Location not reported'}</span></div></li>
       <li><span className="stage-number">2</span><div><h3>Reason</h3><p>{provider} · {status?.ai.model || 'Model not reported'}</p><span>Text → response · Remote model{status?.ai.effort && status.ai.effort !== 'none' ? ` · ${status.ai.effort} effort` : ''}</span></div></li>
-      <li><span className="stage-number">3</span><div><h3>Speak</h3><p>{streaming ? 'Qwen · local streaming' : mlx ? 'Qwen · on this machine' : 'Voicebox · on this machine'}</p><span>Response → generated audio</span></div></li>
+      <li><span className="stage-number">3</span><div><h3>Speak</h3><p>{!status ? 'Not reported' : streaming ? 'Qwen · local streaming' : mlx ? 'Qwen · on this machine' : 'Voicebox · on this machine'}</p><span>Response → generated audio</span></div></li>
     </ol>
     <section className="inspector-section">
       <div className="section-title"><h3>Voice & model</h3><span className={`small-status ${online && status?.voice.loaded ? 'good' : ''}`}>{!online ? 'Unknown' : status?.voice.loaded ? 'Loaded' : mlx ? 'Prepares at start' : 'Not loaded'}</span></div>
@@ -44,7 +61,7 @@ function Pipeline({ status, online }: { status: StudioStatus | null; online: boo
       <dl className="detail-list">
         <div><dt>Engine</dt><dd>{status ? `${status.voice.engine.toUpperCase()} · ${status.voice.model}` : 'Not reported'}</dd></div>
         <div><dt>Voice cache</dt><dd>{!online ? 'Unknown' : status?.voice.cached ? 'Available' : 'Not cached'}</dd></div>
-        <div><dt>Voice source</dt><dd>{status?.voice.source === 'local-bundle' ? 'Private local bundle' : 'Voicebox profile'}</dd></div>
+        <div><dt>Voice source</dt><dd>{!status ? 'Unknown' : status.voice.source === 'local-bundle' ? 'Private local bundle' : 'Voicebox profile'}</dd></div>
         <div><dt>LiveKit</dt><dd>{!online ? 'Unknown' : status?.livekit.configured ? 'Configured' : 'Not configured'}</dd></div>
       </dl>
     </section>
@@ -57,13 +74,31 @@ function Pipeline({ status, online }: { status: StudioStatus | null; online: boo
         <div><dt>Generated audio</dt><dd>{measuredSeconds(status?.metrics.ttsAudioSeconds)}</dd></div>
       </dl>
       <p className="metric-note">Not an end-to-end response-time estimate.</p>
+      <dl className="detail-list recognition-metrics">
+        <div><dt>End-of-turn delay</dt><dd>{measuredSeconds(status?.metrics.endOfUtteranceSeconds)}</dd></div>
+        <div><dt>Transcription delay</dt><dd>{measuredSeconds(status?.metrics.transcriptionDelaySeconds)}</dd></div>
+      </dl>
+      <p className="metric-note">Stages can overlap and these latest values may belong to different replies. Browser playback is not measured here. Do not add these numbers together.</p>
+      <p className="metric-note">Try a short message, then a longer one. Compare reasoning and voice generation to find which stage takes longer. No transcript or audio is saved by this inspector.</p>
+      {!!status?.turns?.length && <ol className="reply-timings">{status.turns.map((turn, index) => <li key={turn.id}>
+        <strong>Reply {index + 1}</strong>
+        <dl className="detail-list">
+          <div><dt>End-of-turn delay</dt><dd>{measuredSeconds(turn.endOfUtteranceSeconds)}</dd></div>
+          <div><dt>Recognition delay</dt><dd>{measuredSeconds(turn.transcriptionDelaySeconds)}</dd></div>
+          <div><dt>First answer text</dt><dd>{measuredSeconds(turn.llmFirstTokenSeconds)}</dd></div>
+          <div><dt>First generated audio</dt><dd>{measuredSeconds(turn.ttsFirstFrameSeconds)}</dd></div>
+        </dl>
+      </li>)}</ol>}
+      <p className="metric-note">Up to 20 correlated replies from the current session, in first-observed order. Each duration uses its own stage’s clock, not a shared stopwatch.</p>
     </details>
     <details className="about">
       <summary>How it works</summary>
       <div className="about-body">
         <p>LiveKit carries microphone audio, text, and replies between this browser and your local agent.</p>
-        <p>{speechProvider} transcribes speech {status?.stt?.local ? 'on this machine' : 'in the cloud'}. {provider} generates the response using a remote model. {streaming ? 'Qwen streams PCM audio locally. Voice conditioning is cached for reuse after it is prepared.' : mlx ? 'Qwen generates audio locally. The worker has not reported PCM streaming.' : 'Voicebox synthesizes complete WAV audio locally before playback is forwarded through LiveKit.'}</p>
-        <p>{streaming ? 'This streams generated audio, not text tokens. The agent still sends sentence-sized text for speech synthesis. The local model and selected voice normally prepare at session start, which can take several seconds.' : mlx ? 'The local model and selected voice normally prepare at session start. Readiness and timings here come from the local worker.' : 'This is not a realtime audio-generation model. A pause while a WAV is generated is expected.'}</p>
+        {status ? <>
+          <p>{status.stt && <>{speechProvider} transcribes speech {status.stt.local ? 'on this machine' : 'in the cloud'}. </>}{provider} generates the response using a remote model. {streaming ? 'Qwen streams PCM audio locally. Voice conditioning is cached for reuse after it is prepared.' : mlx ? 'Qwen generates audio locally. The worker has not reported PCM streaming.' : 'Voicebox synthesizes complete WAV audio locally before playback is forwarded through LiveKit.'}</p>
+          <p>{streaming ? 'This streams generated audio, not text tokens. The agent still sends sentence-sized text for speech synthesis. The local model and selected voice normally prepare at session start, which can take several seconds.' : mlx ? 'The local model and selected voice normally prepare at session start. Readiness and timings here come from the local worker.' : 'This is not a realtime audio-generation model. A pause while a WAV is generated is expected.'}</p>
+        </> : <p>Provider selections and model details will appear when the local server reports them.</p>}
         <p>Typed messages skip speech recognition. Text history stays in this page’s memory. Conversation audio is not recorded here; voice enrollment saves only explicitly approved references to your local server.</p>
         {status?.voice.source === 'local-bundle' && <p>Your selected reference is read from a private local bundle. Voicebox can stay closed. The reference is not uploaded to LiveKit or the LLM.</p>}
       </div>
@@ -72,6 +107,9 @@ function Pipeline({ status, online }: { status: StudioStatus | null; online: boo
 }
 
 function Workspace({ studio, setMuted }: { studio: Studio; setMuted: (muted: boolean) => void }) {
+  const [learning, setLearning] = useState(false);
+  const [micCheck, setMicCheck] = useState(false);
+  const [settingsRequest, setSettingsRequest] = useState<'providers' | 'voices' | null>(null);
   const { session, status, grant, connected, starting, ending, online } = studio;
   const agent = useStudioAgent(grant?.agentIdentity, session.connectionState);
   const chat = useSessionMessages(session);
@@ -237,13 +275,19 @@ function Workspace({ studio, setMuted }: { studio: Studio; setMuted: (muted: boo
 
   return <div className="app-shell">
     <header className="app-header">
-      <a className="brand" href="#conversation" aria-label="Voicebox Studio, conversation"><span className="brand-mark"><Icon name="audio" /></span><span>Voicebox <span className="brand-secondary">Studio</span></span></a>
+      <a className="brand" href="#conversation" aria-label="LiveKit Voice Studio, conversation"><span className="brand-mark"><Icon name="audio" /></span><span>LiveKit <span className="brand-secondary">Voice Studio</span></span></a>
       <span className="header-note"><span className={`connection-dot ${online ? 'online' : ''}`} />{online ? 'Local server connected' : 'Local server unavailable'}</span>
     </header>
-    <main className="studio-layout">
+    <main className={`studio-layout${learning ? '' : ' studio-simple'}`}>
       <section className="workspace" id="conversation" aria-labelledby="workspace-title">
         <div className="workspace-heading"><div><h1 id="workspace-title">Your voice. Your conversation.</h1><p>A place to think out loud — or start with a message.</p></div></div>
-        <StudioSettings status={status} locked={!online || !!grant || starting || ending || (!auditionBusy && status?.phase !== 'idle')} onChanged={studio.refresh} onAuditionBusy={setAuditionBusy} />
+        <div className="experience-controls">
+          <button className="button quiet" aria-pressed={learning} onClick={() => setLearning(!learning)}>{learning ? 'Back to Studio' : 'Learn LiveKit'}</button>
+          <button className="button quiet" aria-expanded={micCheck} disabled={!!grant || starting || auditionBusy} onClick={() => setMicCheck(!micCheck)}>{micCheck ? 'Close microphone check' : 'Check microphone'}</button>
+        </div>
+        {micCheck && !grant && !starting && !auditionBusy && <MicrophoneCheck disabled={ending} />}
+        <StudioSettings onOpen={() => setMicCheck(false)} requestedTab={settingsRequest} onRequestHandled={() => setSettingsRequest(null)} status={status} locked={!online || !!grant || starting || ending || (!auditionBusy && status?.phase !== 'idle')} onChanged={studio.refresh} onAuditionBusy={setAuditionBusy} />
+        {!grant && <SetupGuide disabled={!online || starting || ending || auditionBusy || status?.phase !== 'idle'} onVoices={() => { setMicCheck(false); setSettingsRequest('voices'); }} onSettings={() => { setMicCheck(false); setSettingsRequest('providers'); }} />}
         <div className={`session-strip state-${state}`}>
           <div className="session-status"><span className="state-dot" /><strong role="status">{auditionBusy ? 'Audition in progress' : stateCopy[state]}</strong></div>
           <span className="session-mode">{auditionBusy ? 'Local generation' : grant ? 'Browser ↔ local agent' : 'Voice + text'}</span>
@@ -282,7 +326,7 @@ function Workspace({ studio, setMuted }: { studio: Studio; setMuted: (muted: boo
             follow.current = !messages.length || element.scrollHeight - element.scrollTop - element.clientHeight < 64;
           }}>
             {messages.length === 0 ? <div className="empty-conversation"><span className="empty-symbol" aria-hidden="true">“</span><h3>Make room for a good conversation.</h3><p>Ask a question below, or start a session and turn on your microphone. Your words and the agent’s replies will appear here.</p><button className="text-link" onClick={() => { setDraft('Explain how this voice pipeline works.'); composer.current?.focus(); }}>Try “Explain how this voice pipeline works” <span aria-hidden="true">↗</span></button></div> :
-              messages.map((message) => <article className={`message message-${message.role}`} key={message.id}><div className="message-meta"><strong>{message.role === 'you' ? 'You' : 'Voicebox'}</strong><time dateTime={new Date(message.timestamp).toISOString()}>{new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time></div><p>{message.message}</p></article>)}
+              messages.map((message) => <article className={`message message-${message.role}`} key={message.id}><div className="message-meta"><strong>{message.role === 'you' ? 'You' : 'Agent'}</strong><time dateTime={new Date(message.timestamp).toISOString()}>{new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time></div><p>{message.message}</p></article>)}
           </div>
           <form className="composer" onSubmit={(event) => void submit(event)}>
             <label className="sr-only" htmlFor="message">Message your agent</label>
@@ -294,9 +338,9 @@ function Workspace({ studio, setMuted }: { studio: Studio; setMuted: (muted: boo
           <p className="transcript-note">Only in this tab · Clearing this view does not reset the agent’s memory.</p>
         </section>
       </section>
-      <Pipeline status={status} online={online} />
+      {learning && <Pipeline status={status} online={online} connection={session.connectionState} agentState={agent.state} roomName={grant?.roomName} micEnabled={micEnabled} hasAgentAudio={!!agent.microphoneTrack} />}
     </main>
-    <footer className="app-footer"><span>Voicebox Studio</span><span>Built on LiveKit · Your configured AI · Local voice synthesis</span></footer>
+    <footer className="app-footer"><span>LiveKit Voice Studio</span><span>Built on LiveKit · Your configured AI · Local voice synthesis</span></footer>
     <span className="sr-only" role="status">{announcement}</span>
   </div>;
 }

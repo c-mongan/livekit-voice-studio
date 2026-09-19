@@ -1,4 +1,9 @@
-# Voicebox Studio
+# LiveKit Voice Studio
+
+The standalone setup runs Qwen directly with this project's private voice library.
+It does not require the separate Voicebox application or HTTP server. The older
+Voicebox adapter remains optional; existing `VOICEBOX_*` configuration names and
+Python package imports remain compatible.
 
 Talk with **GitHub Copilot or OpenAI Codex** using a voice you've recorded or have permission to use.
 
@@ -143,3 +148,16 @@ and [third-party notices](web/THIRD_PARTY_LICENSES).
 [MIT license](LICENSE) · [Contributing](CONTRIBUTING.md) · [Security reporting](SECURITY.md)
 
 For source-release contents and license boundaries, see [release preparation](docs/releasing.md).
+
+## Learn by using the app
+
+**First conversation guide** shows local setup checks and the next steps.
+**Check microphone** offers an eight-second browser-only recording and replay.
+**Learn LiveKit** reveals the connection, pipeline, and actual measured timings.
+Start with [hands-on exercises](docs/learn-livekit.md), then use the separate
+[cloud learning example](docs/cloud-learning.md) to explore named agent dispatch.
+The cloud example uses stock voices and does not upload your private reference.
+
+Experimental delivery comparisons are kept separate from conversation defaults.
+See [expressive voice experiments](docs/expressive-experiment.md) for the evidence
+needed before calling a local cloned voice expressive.

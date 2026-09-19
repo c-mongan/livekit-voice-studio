@@ -82,6 +82,46 @@ beforeEach(() => {
   document.body.append(host);
   root = createRoot(host);
 });
+
+it('starts with a simple conversation view and reveals LiveKit details on request', async () => {
+  await mount();
+  expect(host.querySelector('.inspector')).toBeNull();
+  await click(button('Learn LiveKit'));
+  expect(host.querySelector('.inspector')).not.toBeNull();
+  expect(host.textContent).toContain('A room connects participants');
+  await click(button('Back to Studio'));
+  expect(host.querySelector('.inspector')).toBeNull();
+});
+
+it('hides stale diagnostic measurements when the local server goes offline', async () => {
+  mocks.studio.status.metrics.llmFirstTokenSeconds = 1.25;
+  mocks.studio.online = false;
+  await mount();
+  await click(button('Learn LiveKit'));
+  expect(host.querySelector('.metrics')?.textContent).not.toContain('1.25 s');
+});
+
+it('does not invent provider selections when learning while the server is offline', async () => {
+  mocks.studio.online = false;
+  await mount();
+  await click(button('Learn LiveKit'));
+  const inspector = host.querySelector('.inspector')!;
+  expect(inspector.querySelector('.pipeline')?.textContent).not.toMatch(/Azure|Voicebox|Qwen|Cloud/);
+  expect(inspector.querySelector('.pipeline')?.textContent).toContain('Not reported');
+  expect(inspector.textContent).not.toContain('Voicebox profile');
+  expect(inspector.querySelector('.about-body')?.textContent).not.toMatch(/transcribes speech|synthesizes complete WAV|Qwen streams/);
+});
+
+it('groups measured stages by correlated reply without exposing raw speech identifiers', async () => {
+  mocks.studio.status.turns = [{ id: 'private-correlation', llmFirstTokenSeconds: .4, ttsFirstFrameSeconds: .8 }];
+  await mount(); await click(button('Learn LiveKit'));
+  expect(host.textContent).toContain('Reply 1');
+  expect(host.querySelector('.reply-timings')?.textContent).toContain('0.40 s');
+  expect(host.querySelector('.reply-timings')?.textContent).toContain('0.80 s');
+  expect(host.textContent).not.toContain('private-correlation');
+  mocks.studio.online = false; await act(async () => render());
+  expect(host.querySelector('.reply-timings')).toBeNull();
+});
 afterEach(async () => {
   await act(async () => root.unmount());
   host.remove();
@@ -93,6 +133,7 @@ afterEach(async () => {
 describe('typed-first and keyboard interaction', () => {
   it('keeps measured latency in an optional native disclosure without hiding setup status', async () => {
     await mount();
+    await click(button('Learn LiveKit'));
     const summary = [...host.querySelectorAll('summary')].find((item) => item.textContent === 'Measured latency')!;
     expect(summary).toBeDefined();
     const details = summary.closest('details')!;
@@ -184,6 +225,7 @@ describe('typed-first and keyboard interaction', () => {
     mocks.studio.status.voice.backend = 'mlx';
     mocks.studio.status.voice.streaming = true;
     await mount();
+    await click(button('Learn LiveKit'));
     expect(host.textContent).toContain('Private local bundle');
     expect(host.textContent).toContain('Voicebox can stay closed');
     expect(host.textContent).toContain('reference is not uploaded');
@@ -441,6 +483,7 @@ describe('truthful transcript and accessible visual state', () => {
   });
   it('defaults to complete-WAV Voicebox behavior when optional backend fields are absent', async () => {
     await mount();
+    await click(button('Learn LiveKit'));
     expect(host.querySelector('.pipeline li:last-child p')?.textContent).toBe('Voicebox · on this machine');
     expect(host.querySelector('.about-body')?.textContent).toContain('complete WAV audio');
     expect(host.textContent).not.toContain('Qwen · local streaming');
@@ -449,6 +492,7 @@ describe('truthful transcript and accessible visual state', () => {
   it('describes reported MLX PCM streaming without claiming a cold worker is loaded', async () => {
     mocks.studio.status.voice = { ...readyStatus.voice, backend: 'mlx', streaming: true, loaded: false };
     await mount();
+    await click(button('Learn LiveKit'));
     expect(host.querySelector('.pipeline li:last-child p')?.textContent).toBe('Qwen · local streaming');
     expect(host.querySelector('.small-status')?.textContent).toBe('Prepares at start');
     expect(host.querySelector('.small-status')?.classList.contains('good')).toBe(false);
@@ -462,6 +506,7 @@ describe('truthful transcript and accessible visual state', () => {
   it('does not infer streaming or warm readiness from the MLX backend name alone', async () => {
     mocks.studio.status.voice = { ...readyStatus.voice, backend: 'mlx', streaming: false, loaded: false, cached: false };
     await mount();
+    await click(button('Learn LiveKit'));
     expect(host.querySelector('.pipeline li:last-child p')?.textContent).toBe('Qwen · on this machine');
     expect(host.querySelector('.about-body')?.textContent).toContain('has not reported PCM streaming');
     expect(host.textContent).toContain('Not cached');
@@ -473,6 +518,7 @@ describe('truthful transcript and accessible visual state', () => {
     connect();
     mocks.agent.state = 'thinking';
     await mount();
+    await click(button('Learn LiveKit'));
     expect(host.querySelector('.small-status')?.textContent).toBe('Loaded');
     expect(host.querySelector('.state-help')?.textContent).toContain('streams audio as it is generated');
     expect(host.querySelector('.state-help')?.textContent).not.toContain('tens of seconds');
@@ -494,6 +540,7 @@ describe('truthful transcript and accessible visual state', () => {
 
   it('does not invent measurements or animate silence', async () => {
     await mount();
+    await click(button('Learn LiveKit'));
     expect(host.querySelectorAll('.metrics dd')).toHaveLength(3);
     expect([...host.querySelectorAll('.metrics dd')].map((element) => element.textContent)).toEqual(['Not measured', 'Not measured', 'Not measured']);
     expect([...host.querySelectorAll<HTMLElement>('.audio-meter span')].every((element) => element.style.getPropertyValue('--level') === '0.035')).toBe(true);

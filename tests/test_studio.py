@@ -546,3 +546,121 @@ def test_turn_timing_metrics_require_owned_finite_values(broker, key):
         assert broker.metrics[key] is None
     broker._event(owner, {"key": owner.key, "event": "metrics", key: 1.25})
     assert broker.metrics[key] == 1.25
+
+
+def test_metric_history_correlates_speech_only_and_keeps_first_frame(broker):
+    owner = owned_session()
+    broker.current = owner
+    broker._event(
+        owner, {"key": "wrong", "event": "metrics", "speechId": "speech-1", "ttsAudioSeconds": 10}
+    )
+    broker._event(owner, {"key": owner.key, "event": "metrics", "llmFirstTokenSeconds": 9})
+    assert broker.turns == []
+    for data in (
+        {"speechId": "speech-1", "llmFirstTokenSeconds": 0.4},
+        {"speechId": "speech-2", "llmFirstTokenSeconds": 0.8},
+        {"speechId": "speech-1", "ttsFirstFrameSeconds": 0.3, "ttsAudioSeconds": 1.0},
+        {"speechId": "speech-1", "ttsFirstFrameSeconds": 0.6, "ttsAudioSeconds": 2.0},
+        {"speechId": "speech-1", "transcriptionDelaySeconds": float("nan")},
+    ):
+        broker._event(owner, {"key": owner.key, "event": "metrics", **data})
+    assert broker.turns == [
+        {
+            "id": "speech-1",
+            "llmFirstTokenSeconds": 0.4,
+            "ttsFirstFrameSeconds": 0.3,
+            "ttsAudioSeconds": 3.0,
+        },
+        {"id": "speech-2", "llmFirstTokenSeconds": 0.8},
+    ]
+    assert broker.metrics["ttsFirstFrameSeconds"] == 0.6
+
+
+def test_metric_history_is_bounded_and_rejects_untrusted_identifiers(broker):
+    owner = owned_session()
+    broker.current = owner
+    for identifier in (None, "", "/private/path", "x" * 129):
+        broker._event(
+            owner,
+            {"key": owner.key, "event": "metrics", "speechId": identifier, "ttsAudioSeconds": 1},
+        )
+    assert broker.turns == []
+    for number in range(22):
+        broker._event(
+            owner,
+            {
+                "key": owner.key,
+                "event": "metrics",
+                "speechId": f"speech-{number}",
+                "ttsAudioSeconds": 1,
+            },
+        )
+    assert len(broker.turns) == 20
+    assert broker.turns[0]["id"] == "speech-2"
+
+
+async def test_new_session_resets_metric_history(broker, monkeypatch):
+    broker.turns = [{"id": "previous", "ttsAudioSeconds": 1}]
+    monkeypatch.setattr(broker, "_create", AsyncMock(return_value={}))
+    await broker.create()
+    assert broker.turns == []
+
+
+@pytest.mark.parametrize("reason", ["startup", "heartbeat", "duration", "user"])
+async def test_audition_deadline_reason_survives_safe_drain(broker, monkeypatch, reason):
+    owner = owned_session()
+    owner.kind = "audition"
+    owner.pcm.extend(b"\x01\x02")
+    process = Process()
+    owner.process = process
+    broker.current = broker.audition = owner
+    broker.phase = "active"
+    broker.lease.mark_active()
+    monkeypatch.setattr(broker, "_end", AsyncMock())
+    if reason == "user":
+        await broker.end_audition(owner.id)
+    else:
+        if reason == "startup":
+            broker.phase = "starting"
+            owner.created -= module.STARTUP_SECONDS + 1
+        elif reason == "heartbeat":
+            owner.heartbeat -= module.HEARTBEAT_SECONDS + 1
+        else:
+            owner.created -= module.AUDITION_SECONDS + 1
+        sleeps = 0
+
+        async def tick(_):
+            nonlocal sleeps
+            sleeps += 1
+            if sleeps > 1:
+                raise asyncio.CancelledError
+
+        monkeypatch.setattr(module.asyncio, "sleep", tick)
+        with pytest.raises(asyncio.CancelledError):
+            await broker.watchdog()
+    await owner.end_task
+    if reason != "user":
+        broker._event(owner, {"key": owner.key, "event": "error", "message": "Worker stopped."})
+    broker._event(owner, {"key": owner.key, "event": "finished", "safe": True})
+    process.finish()
+    await broker._monitor(owner)
+    result = broker.audition_status(owner.id)
+    assert broker.phase == "idle"
+    assert not broker.lease.marker.exists()
+    assert not owner.pcm
+    if reason == "user":
+        assert result["state"] == "cancelled"
+        assert result["message"] is None
+    else:
+        assert result["state"] == "failed"
+        expected = {
+            "startup": (
+                "Voice sample startup timed out. Check local model readiness, then try again."
+            ),
+            "heartbeat": (
+                "Voice sample stopped because the browser stopped responding. "
+                "Keep Studio open and try again."
+            ),
+            "duration": "Voice sample generation reached its time limit. Try a shorter sample.",
+        }
+        assert result["message"] == expected[reason]

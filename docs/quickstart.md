@@ -7,8 +7,7 @@ that is a planning margin, not a runtime memory requirement.
 
 ## 1. Install the application
 
-Clone the source, then install its locked dependencies. Until the repository is
-public, cloning requires access to the private GitHub repository:
+Clone the public source, then install its locked dependencies:
 
 ```sh
 git clone https://github.com/c-mongan/livekit-voice-studio.git
@@ -63,8 +62,9 @@ For a new checkout:
 test -e .env || (umask 077; cp .env.example .env)
 ```
 
-The example preserves the older external Voicebox backend by default. For this
-standalone guide, edit these fields in `.env` (replace paths with the real paths
+The example selects standalone MLX. Existing `.env` files are never replaced;
+older HTTP installations can keep `VOICEBOX_TTS_BACKEND=voicebox`.
+Edit these fields in `.env` (replace paths with the real paths
 returned by the preceding setup steps):
 
 | Field | Value for this guide |
@@ -130,3 +130,33 @@ uv run --no-sync python -m examples.studio --check
 First connection prepares the model and reference before the agent is ready.
 Subsequent turns reuse that process. End the session before changing voices or
 auditioning another one. Voicebox can stay closed throughout this workflow.
+
+## Browser setup and learning tools
+
+Standalone mode uses this project's own Studio server, voice library and Qwen
+adapter. The separate Voicebox app and its HTTP service can stay closed. Older
+`VOICEBOX_*` variable names are retained for compatibility; they do not imply an
+external service is required when `VOICEBOX_TTS_BACKEND=mlx` and a local voice is selected.
+
+Keep source and virtual environments in a normal local development folder rather
+than an offloaded cloud-sync folder. If setup checks report slow or unavailable
+files, make them locally available and retry. The server returns this diagnostic
+after three seconds while sharing any still-running check across requests.
+
+If another Studio fork has incompatible saved settings, select a separate private
+`VOICEBOX_LIBRARY_DIR` in `.env`; do not delete the other installation's library.
+An explicitly configured authorized `VOICEBOX_VOICE_BUNDLE` can seed the new library
+locally. The original recording and settings remain unchanged.
+
+Open **First conversation guide** for read-only setup checks. A green Found result
+confirms local configuration, not account access or model synthesis. Missing
+LiveKit credentials do not block a local voice sample. **Check microphone** records
+up to eight seconds for local replay; nothing is uploaded or saved.
+
+The default view focuses on conversation. **Learn LiveKit** reveals the pipeline,
+room state and measured generation delays. Try the [learning exercises](learn-livekit.md).
+
+To compare turn-taking, set `VOICEBOX_TURN_DETECTION=audio-local` in your private
+`.env` and restart Studio after ending your session. This selects LiveKit’s bundled
+CPU audio turn detector. Keep `vad` to retain the existing behavior. Judge pauses
+and interruptions on your microphone; a configured detector is not quality proof.

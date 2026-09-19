@@ -12,7 +12,7 @@ dist/
 !.env.example
 benchmark-results*.json
 .voicebox-runtime/
-web/node_modules/
+web/node_modules
 web/dist/
 .impeccable/
 .voicebox-agent-*/

@@ -17,6 +17,11 @@ from livekit.plugins import voicebox
 from examples.fast_qwen import FastQwenTTS
 from examples.minimal_agent import configured_ai, configured_provider, provider_choices
 from examples.startup_progress import STARTUP_MESSAGES
+from examples.turn_handling import (
+    InvalidTurnDetection,
+    LocalTurnDetectionUnavailable,
+    configured_turn_handling,
+)
 
 
 def report(event: str, **values: Any) -> None:
@@ -122,16 +127,15 @@ async def run() -> None:
         if stop.is_set():
             return
         stage = report_startup("conversation session setup")
+        turn_handling = await asyncio.to_thread(configured_turn_handling)
+        if stop.is_set():
+            return
         session = AgentSession(
             vad=vad,
             stt=speech,
             llm=language_model,
             tts=provider,
-            turn_handling={
-                "turn_detection": "vad",
-                "interruption": {"mode": "vad"},
-                "preemptive_generation": {"enabled": False},
-            },
+            turn_handling=turn_handling,
         )
 
         @session.on("metrics_collected")
@@ -140,17 +144,23 @@ async def run() -> None:
             if isinstance(value, TTSMetrics):
                 report(
                     "metrics",
+                    speechId=value.speech_id,
                     ttsFirstFrameSeconds=value.ttfb if value.ttfb >= 0 else None,
                     ttsAudioSeconds=value.audio_duration,
                 )
             elif isinstance(value, EOUMetrics):
                 report(
                     "metrics",
+                    speechId=value.speech_id,
                     endOfUtteranceSeconds=value.end_of_utterance_delay,
                     transcriptionDelaySeconds=value.transcription_delay,
                 )
             elif isinstance(value, LLMMetrics):
-                report("metrics", llmFirstTokenSeconds=value.ttft if value.ttft >= 0 else None)
+                report(
+                    "metrics",
+                    speechId=value.speech_id,
+                    llmFirstTokenSeconds=value.ttft if value.ttft >= 0 else None,
+                )
 
         @session.on("error")
         def session_error(event: Any) -> None:
@@ -238,7 +248,12 @@ async def run() -> None:
         await stop.wait()
     except (Exception, asyncio.CancelledError) as error:
         # Process boundary: emit a static diagnostic, not provider bodies or secrets.
-        report("error", message=f"Failed during {stage} ({type(error).__name__}).")
+        message = (
+            str(error)
+            if isinstance(error, (InvalidTurnDetection, LocalTurnDetectionUnavailable))
+            else f"Failed during {stage} ({type(error).__name__})."
+        )
+        report("error", message=message)
         if isinstance(error, asyncio.CancelledError):
             raise
     finally:

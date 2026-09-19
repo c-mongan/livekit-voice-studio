@@ -28,6 +28,9 @@ files = [
     "benchmarks/conversation_stats.py",
     "examples/studio.py",
     "examples/studio_worker.py",
+    "examples/studio_setup.py",
+    "examples/turn_handling.py",
+    "examples/cloud_agent.py",
     "examples/audition_worker.py",
     "examples/backend_lease.py",
     "examples/fast_qwen.py",
@@ -41,6 +44,7 @@ files = [
     "tools/studio_doctor.py",
     "tools/evaluate.py",
     "tools/read_aloud.py",
+    "tools/expressive_compare.py",
 ]
 
 [[tool.mypy.overrides]]

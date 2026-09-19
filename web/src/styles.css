@@ -24,6 +24,37 @@ a { color: inherit; }
 .connection-dot.online { background: var(--success); }
 .studio-layout { display: grid; grid-template-columns: minmax(0, 1fr) 284px; gap: 40px; align-items: start; padding: 24px 0; }
 .workspace { min-width: 0; }
+.studio-layout.studio-simple { grid-template-columns: minmax(0, 860px); justify-content: center; }
+.experience-controls { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.experience-controls [aria-pressed=true] { color: var(--accent-hover); background: var(--accent-soft); }
+.setup-guide { border-top: 1px solid var(--line); margin-bottom: 12px; flex-shrink: 0; }
+.guide-body { padding: 16px 0 24px; }
+.guide-body h2 { font-size: 1.125rem; }
+.guide-steps { padding-left: 24px; margin: 16px 0 0; }
+.guide-steps > li { padding: 0 0 24px 8px; }
+.guide-steps h3 { font-size: .9375rem; }
+.guide-steps p { margin: 8px 0; font-size: .875rem; }
+.guide-steps a { display: inline-block; padding: 12px 0; font-size: .8125rem; color: var(--accent-hover); }
+.setup-checks { list-style: none; padding: 0; margin: 12px 0; }
+.setup-checks li { display: grid; grid-template-columns: 88px minmax(0, 1fr); gap: 12px; border-top: 1px solid var(--line); padding: 10px 0; }
+.setup-checks p { margin: 0; overflow-wrap: anywhere; }
+.setup-checks p + p { margin-top: 4px; }
+.check-state { font-size: .75rem; font-weight: 600; padding-top: 2px; }
+.check-pass { color: var(--success); }
+.check-missing { color: var(--warning); }
+.check-unverified { color: var(--muted); }
+.microphone-check { border: 1px solid var(--line); border-radius: 8px; padding: 20px; margin-bottom: 16px; flex-shrink: 0; }
+.microphone-check h2 { font-size: 1rem; }
+.microphone-check p { margin: 8px 0; font-size: .8125rem; }
+.microphone-check meter { width: min(100%, 280px); height: 20px; margin: 8px; }
+.microphone-check audio { width: 100%; margin-top: 12px; }
+.learn-lesson { margin: 16px 0; padding-bottom: 16px; border-bottom: 1px solid var(--line); }
+.learn-lesson summary { min-height: 44px; cursor: pointer; font-size: .8125rem; font-weight: 600; padding-block: 12px; }
+.learn-lesson p, .learn-lesson a { font-size: .75rem; line-height: 1.65; margin: 12px 0; }
+.learn-lesson a { display: inline-block; color: var(--accent-hover); }
+.reply-timings { padding-left: 18px; margin: 16px 0; font-size: .75rem; }
+.reply-timings > li { border-top: 1px solid var(--line); padding: 12px 0; }
+.workspace:has(.guide-body), .workspace:has(.microphone-check) { height: auto; }
 .workspace-heading { margin-bottom: 16px; }
 h1 { font-size: 1.5rem; line-height: 1.25; letter-spacing: -.025em; font-weight: 650; }
 .workspace-heading p { color: var(--muted); margin-top: 4px; font-size: .875rem; }

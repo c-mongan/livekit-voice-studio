@@ -6,8 +6,11 @@ import pytest
 from examples import studio_worker
 
 
+@pytest.mark.parametrize("turn_mode", ["vad", "invalid"])
 @pytest.mark.parametrize("drain_succeeds", [True, False])
-async def test_rpc_registration_follows_connection_and_shutdown_drains(monkeypatch, drain_succeeds):
+async def test_rpc_registration_follows_connection_and_shutdown_drains(
+    monkeypatch, drain_succeeds, turn_mode
+):
     reports = []
     order = []
     handlers = {}
@@ -91,7 +94,16 @@ async def test_rpc_registration_follows_connection_and_shutdown_drains(monkeypat
         "LIVEKIT_API_SECRET": "unit-secret-more-than-32-characters",
     }.items():
         monkeypatch.setenv(key, value)
+    monkeypatch.setenv("VOICEBOX_TURN_DETECTION", turn_mode)
     await studio_worker.run()
+    if turn_mode == "invalid":
+        assert (
+            "error",
+            {"message": "VOICEBOX_TURN_DETECTION must be vad or audio-local."},
+        ) in reports
+        assert "session-start" not in order
+        assert reports[-1] == ("finished", {"safe": drain_succeeds})
+        return
     assert studio_worker.AgentSession.call_args.kwargs["turn_handling"] == {
         "turn_detection": "vad",
         "interruption": {"mode": "vad"},

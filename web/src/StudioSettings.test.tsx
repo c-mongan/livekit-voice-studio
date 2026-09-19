@@ -58,6 +58,18 @@ it('orders voice-first tabs with keyboard navigation and a single tab stop', asy
     expect(tabs.querySelectorAll('[tabindex="0"]')).toHaveLength(1);
   }
 });
+it('returns focus to the guide button after an externally requested tab closes', async () => {
+  await click('Voice library'); await click('Close');
+  const guideButton = document.createElement('button');
+  document.body.append(guideButton); guideButton.focus();
+  try {
+    await act(async () => root.render(<StudioSettings locked={false} status={status} onChanged={changed} requestedTab="providers" />));
+    expect(host.querySelector('[role=tab][aria-selected=true]')?.textContent).toBe('Providers');
+    button('Close').focus();
+    await click('Close');
+    expect(document.activeElement).toBe(guideButton);
+  } finally { guideButton.remove(); }
+});
 beforeEach(async () => {
   locked = false;
   status = { ...readyStatus };
