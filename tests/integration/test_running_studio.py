@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import time
+import wave
 
 import aiohttp
 import pytest
@@ -39,7 +40,7 @@ async def post(http, path, body):
         return await response.json()
 
 
-async def exercise(http, iteration):
+async def exercise(http, iteration, spoken_audio=None):
     initial = await status(http)
     assert initial["phase"] == "idle", "Another session is active; no takeover is allowed."
     require_local(initial)
@@ -51,6 +52,8 @@ async def exercise(http, iteration):
     followup_expected = False
     followup_transcribed = asyncio.Event()
     last_audio = 0.0
+    audio_source = None
+    interruption_seconds = None
 
     async def consume(track):
         nonlocal samples, last_audio
@@ -145,18 +148,73 @@ async def exercise(http, iteration):
         # A second Start must not steal or replace this session.
         async with http.post(BASE + "/api/session", json={}, headers=HEADERS) as response:
             assert response.status == 409
+        if spoken_audio is not None:
+            audio_source = rtc.AudioSource(48000, 1)
+            track = rtc.LocalAudioTrack.create_audio_track("synthetic-interruption", audio_source)
+            await room.local_participant.publish_track(
+                track, rtc.TrackPublishOptions(source=rtc.TrackSource.SOURCE_MICROPHONE)
+            )
+            queued_audio = asyncio.Queue()
+
+            async def microphone():
+                while True:
+                    try:
+                        block = queued_audio.get_nowait()
+                        queued = True
+                    except asyncio.QueueEmpty:
+                        block = bytes(1920)
+                        queued = False
+                    await audio_source.capture_frame(rtc.AudioFrame(block, 48000, 1, 960))
+                    if queued:
+                        queued_audio.task_done()
+                    await asyncio.sleep(0.02)
+
+            microphone_task = asyncio.create_task(microphone())
+            microphone_task.add_done_callback(observed)
+            tasks.append(microphone_task)
+            await asyncio.sleep(0.5)
+            # The SDK suppresses recognition during its first 3 s of AEC warm-up.
+            # Exercise established-conversation barge-in, preserving that echo guard.
+            await ask("Reply with only: Ready for the next question.")
+            await wait_for(listening)
+            await asyncio.sleep(3)
         await ask("Count slowly from one to twenty, saying every number.")
         interrupted_while_speaking = agent().attributes.get("lk.agent.state") == "speaking"
         assert interrupted_while_speaking, "Reply ended before the interruption could be tested."
-        result = await room.local_participant.perform_rpc(
-            destination_identity=grant["agentIdentity"],
-            method="voicebox.interrupt",
-            payload="{}",
-        )
-        assert json.loads(result)["stopped"] is True
-        await wait_for(listening)
-        followup_expected = True
-        fresh_samples = await ask("Reply with only: Recovery works.")
+        if spoken_audio is None:
+            result = await room.local_participant.perform_rpc(
+                destination_identity=grant["agentIdentity"],
+                method="voicebox.interrupt",
+                payload="{}",
+            )
+            assert json.loads(result)["stopped"] is True
+            await wait_for(listening)
+            followup_expected = True
+            fresh_samples = await ask("Reply with only: Recovery works.")
+        else:
+            # No Stop RPC or typed follow-up: recognition must supply the new request.
+            followup_expected = True
+
+            async def speak():
+                for offset in range(0, len(spoken_audio), 1920):
+                    queued_audio.put_nowait(spoken_audio[offset : offset + 1920].ljust(1920, b"\0"))
+                await queued_audio.join()
+                await asyncio.sleep(1.2)
+
+            began = time.monotonic()
+            speaker = asyncio.create_task(speak())
+            speaker.add_done_callback(observed)
+            tasks.append(speaker)
+            # Bound this below the long counting reply's natural completion.
+            async with asyncio.timeout(3):
+                await wait_for(lambda: agent().attributes.get("lk.agent.state") != "speaking")
+            interruption_seconds = time.monotonic() - began
+            before = samples
+            await wait_for(speaker.done)
+            await speaker
+            await wait_for(followup_transcribed.is_set)
+            await wait_for(lambda: samples - before >= 2400)
+            fresh_samples = samples - before
         await wait_for(followup_transcribed.is_set)
         await wait_for(listening)
         state = await status(http)
@@ -166,6 +224,9 @@ async def exercise(http, iteration):
             json.dumps(
                 {
                     "session": iteration + 1,
+                    "interruption_mode": "speech" if spoken_audio is not None else "rpc",
+                    "speaking_state_exit_seconds": interruption_seconds,
+                    "initial_echo_warmup_excluded": spoken_audio is not None,
                     "interrupted_while_speaking": interrupted_while_speaking,
                     "fresh_followup_samples": fresh_samples,
                     "followup_text_matched": followup_transcribed.is_set(),
@@ -184,6 +245,8 @@ async def exercise(http, iteration):
             for task in tasks:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
+            if audio_source is not None:
+                await audio_source.aclose()
         async with asyncio.timeout(150):
             while True:
                 state = await status(http)
@@ -200,3 +263,21 @@ async def test_two_sessions_interrupt_followup_and_cleanup():
         require_local(state)
         for iteration in range(2):
             await exercise(http, iteration)
+
+
+@pytest.mark.skipif(
+    os.environ.get("STUDIO_BARGE_IN_AUDIO") is None,
+    reason="Supply a 16 kHz mono WAV saying: Stop talking. Reply with only: Recovery works.",
+)
+async def test_spoken_interruption_and_cleanup():
+    with wave.open(os.environ["STUDIO_BARGE_IN_AUDIO"], "rb") as fixture:
+        assert fixture.getnchannels() == 1 and fixture.getsampwidth() == 2
+        assert fixture.getframerate() == 16000
+        assert 0 < fixture.getnframes() <= 16000 * 15
+        audio = fixture.readframes(fixture.getnframes())
+    resampler = rtc.AudioResampler(16000, 48000, num_channels=1)
+    frames = resampler.push(rtc.AudioFrame(audio, 16000, 1, len(audio) // 2))
+    frames += resampler.flush()
+    audio = b"".join(bytes(frame.data) for frame in frames)
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as http:
+        await exercise(http, 0, spoken_audio=audio)

@@ -2,7 +2,7 @@
 
 These are bounded local synthetic tests, not an independent installation review
 or a claim of long-session reliability. No physical microphone, private text or
-recording is used. Model and voice assets remain outside the repository.
+private conversation recording is used. Model and voice assets remain outside the repository.
 
 ## Five spoken turns
 
@@ -53,3 +53,36 @@ were deselected. Lint, formatting and mypy passed. An earlier grouped check
 printed a native `recursive_mutex lock failed` teardown error after the passing
 pytest summary; that run did not isolate pytest's exit code. The direct rerun
 was clean. The teardown warning remains unexplained and is not claimed fixed.
+
+## Spoken interruption and the initial echo guard
+
+An additional synthetic test now exercises spoken interruption after the first
+reply. It uses a local microphone track, no physical microphone, and requires the
+spoken instruction to produce a matching agent transcript and nonzero audio.
+The first successful run took 27.42 seconds. The agent left its speaking state
+0.810 seconds after synthetic input began; cleanup returned Studio to idle/ready.
+This is a state-transition observation, not audible cancellation latency.
+
+The initial immediate-interruption probes failed to deliver the full instruction.
+The same fixture transcribed correctly when sent directly to Nemotron, including
+with the agent's resampling and gain processing. A temporary synthetic-input trace
+showed only the tail reaching recognition. Source inspection identified the
+installed SDK's default three-second AEC warm-up: `AgentActivity.push_audio`
+substitutes silence for recognition during that window. Continuous input and a
+48 kHz publishing rate did not fix it. Completing the initial reply and allowing
+the warm-up to expire did. The application guard is unchanged, and immediate
+first-reply spoken interruption remains a documented limitation.
+
+Temporary audio tracing was removed before delivery. The committed test prints
+only timings and result flags; it does not save audio or transcript text. The
+fixture is generated locally and remains outside the repository.
+
+A silence-only negative control failed at the three-second speaking-state deadline
+as expected (23.80 seconds including setup and cleanup). It returned Studio to
+idle. Silence therefore did not pass as successful interruption.
+
+The final combined run passed both tests in 66.76 seconds: two RPC sessions and
+one spoken-interruption session. The spoken state transition was 0.654 seconds;
+all three sessions matched their follow-up text and cleaned up. Studio reported
+idle/ready afterward. Ruff and formatting checks passed, and both live tests
+skipped when their opt-in flag was absent.

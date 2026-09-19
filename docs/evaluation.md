@@ -148,3 +148,35 @@ session must work. The test covers the Stop reply RPC, not natural microphone
 barge-in, human voice quality, or long-session endurance. It never downloads a
 model or changes the selected provider. Failures stay failures; do not clear a
 blocked backend just to rerun this check.
+
+### Spoken interruption after the first reply
+
+On macOS, generate a short synthetic fixture with the built-in system voice:
+
+```sh
+say -o /tmp/studio-barge-in.aiff 'Stop talking. Reply with only: Recovery works.'
+afconvert /tmp/studio-barge-in.aiff /tmp/studio-barge-in.wav -f WAVE -d LEI16@16000
+STUDIO_RELIABILITY_INTEGRATION=1 STUDIO_BARGE_IN_AUDIO=/tmp/studio-barge-in.wav \
+  uv run --no-sync python -m pytest tests/integration/test_running_studio.py -q -s
+```
+
+On other systems, supply an authorized synthetic PCM16, mono, 16 kHz WAV of that
+phrase, at most 15 seconds long. The fixture is never committed. Without
+`STUDIO_BARGE_IN_AUDIO`, the additional spoken test skips; the two-session RPC
+check still runs with its existing opt-in flag.
+
+The spoken test publishes continuous synthetic microphone audio, including silence
+between phrases. It completes a first reply, then speaks over a second reply.
+It requires the agent to leave its speaking state within three seconds, produce
+the expected follow-up text and nonzero audio, and clean up to idle. It does not
+send a Stop RPC or a typed follow-up for the interrupted turn. The reported state
+transition time is not a measurement of audible cancellation latency.
+
+**First-reply limitation:** the installed LiveKit Agents SDK defaults to a
+three-second echo-cancellation warm-up when the agent first speaks. During that
+window it substitutes silence on the recognition path, even though voice activity
+can still be detected. Interrupting immediately can therefore lose words. This
+test explicitly excludes that initial window; Studio retains the SDK's protection
+against speaker echo. Use Stop reply if you need to cancel immediately. This is
+not proof of headset, speakerphone, accent, background-noise or browser-microphone
+performance. See [the measured results](reliability-2026-09-19.md).
