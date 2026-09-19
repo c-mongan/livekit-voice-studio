@@ -41,7 +41,8 @@ speech and room transport all run on your computer. No cloud AI account or
 LiveKit Cloud project is needed for this setup.
 
 Start with an installed small chat model such as `qwen3:1.7b`. You can choose
-another installed Ollama model, or supply an OpenAI-compatible model server.
+another installed Ollama model from the Settings dropdown, or supply an
+OpenAI-compatible model server. Use **Refresh models** after installing one.
 Models share memory with the speech pipeline, so larger is not always better.
 See [local setup, model choices and memory](docs/local-cloud-components.md).
 
@@ -63,7 +64,8 @@ stays on your Mac.
 | OpenAI Codex | Restricted preflight, two-turn memory, and a spoken interruption/follow-up with local speech after echo warm-up |
 | OpenAI, Azure, compatible servers | Implemented; validate your own endpoint, account and model |
 
-Codex and Copilot use an installed, signed-in CLI; neither is an on-device language
+Codex and Copilot offer account model and reasoning-level dropdowns in Settings.
+They use an installed, signed-in CLI; neither is an on-device language
 model. Copilot is configured without tools. Codex requires separate consent to a
 **restricted agent**, with a private workspace, minimal runtime-file access and
 command networking disabled. It still uses cloud model/authentication traffic and

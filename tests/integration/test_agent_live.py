@@ -26,7 +26,12 @@ async def test_real_reasoning_remembers_synthetic_word():
     context = llm.ChatContext()
     context.add_message(role="system", content="Follow the user's short reply format exactly.")
     timings = []
-    async with AgentLLM(provider=provider, allow_restricted_agent=restricted) as adapter:
+    async with AgentLLM(
+        provider=provider,
+        model=os.environ.get("STUDIO_TEST_MODEL", "gpt-5.6-luna"),
+        reasoning_effort=os.environ.get("STUDIO_TEST_EFFORT", "low"),
+        allow_restricted_agent=restricted,
+    ) as adapter:
         metadata = await adapter.validate()
         if provider == "copilot":
             assert metadata["tools_enabled"] is False
@@ -59,6 +64,7 @@ async def test_real_reasoning_remembers_synthetic_word():
             {
                 "reasoning_check": {
                     "provider": provider,
+                    "model": adapter.model,
                     "turns": 2,
                     "memory_correct": True,
                     "first_text_seconds": timings,

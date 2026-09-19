@@ -162,3 +162,18 @@ def test_deletion_preserves_unexpected_user_files(tmp_path):
         library.delete_voice(voice["id"])
     assert (path / "notes.txt").is_file()
     assert (path / "reference.wav").is_file()
+
+
+def test_named_agent_model_and_effort_persist(tmp_path):
+    library = StudioLibrary(tmp_path)
+    for provider in ("codex", "copilot"):
+        library.update_settings(
+            {
+                "llmProvider": provider,
+                "llmModel": "another-model",
+                "reasoningEffort": "high",
+                "codexRestrictedApproved": True,
+            }
+        )
+        assert StudioLibrary(tmp_path).settings()["llmModel"] == "another-model"
+        assert library.settings()["reasoningEffort"] == "high"

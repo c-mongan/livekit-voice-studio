@@ -89,11 +89,11 @@ def apply_livekit(mode: str, env: MutableMapping[str, str], configured: Mapping[
     env["VOICEBOX_LIVEKIT_MODE"] = mode
 
 
-async def check_llm_endpoint(provider: str, url: str, model: str, api_key: str = "") -> None:
-    """Require a reachable endpoint advertising this model; never pull or generate."""
+async def list_llm_models(provider: str, url: str, api_key: str = "") -> list[str]:
+    """Read the bounded model catalog; never pull or generate."""
     import aiohttp
 
-    endpoint = validate_endpoint(provider, url, model)
+    endpoint = validate_endpoint(provider, url, "catalog")
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
     try:
         async with aiohttp.ClientSession(
@@ -128,18 +128,17 @@ async def check_llm_endpoint(provider: str, url: str, model: str, api_key: str =
                 entries = payload.get("data") if isinstance(payload, dict) else None
                 if not isinstance(entries, list):
                     raise ValueError
-                if not any(
-                    isinstance(entry, dict) and entry.get("id") == model for entry in entries
-                ):
-                    raise RuntimeError(
-                        "The selected model is unavailable at the reasoning endpoint. "
-                        + (
-                            "Run ollama list and choose an installed chat model in Settings. "
-                            if provider == "ollama"
-                            else "Check the server's model list and update the model in Settings. "
-                        )
-                        + "Studio never downloads or falls back."
-                    )
+                models: set[str] = set()
+                for entry in entries:
+                    model = entry.get("id") if isinstance(entry, dict) else None
+                    if not isinstance(model, str):
+                        continue
+                    try:
+                        validate_endpoint(provider, url, model)
+                    except ValueError:
+                        continue
+                    models.add(model)
+                return sorted(models)
     except (aiohttp.ClientError, TimeoutError, ValueError, UnicodeError):
         raise RuntimeError(
             "The reasoning endpoint could not be verified. "
@@ -150,3 +149,18 @@ async def check_llm_endpoint(provider: str, url: str, model: str, api_key: str =
             )
             + "Retry when ready; Studio never falls back to another provider."
         ) from None
+
+
+async def check_llm_endpoint(provider: str, url: str, model: str, api_key: str = "") -> None:
+    """Require the exact model without downloading or switching providers."""
+    validate_endpoint(provider, url, model)
+    if model not in await list_llm_models(provider, url, api_key):
+        raise RuntimeError(
+            "The selected model is unavailable at the reasoning endpoint. "
+            + (
+                "Run ollama list and choose an installed chat model in Settings. "
+                if provider == "ollama"
+                else "Check the server's model list and update the model in Settings. "
+            )
+            + "Studio never downloads or falls back."
+        )

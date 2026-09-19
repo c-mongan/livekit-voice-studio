@@ -719,3 +719,46 @@ def test_reply_sequences_distinguish_interrupted_followup_from_normal_first_repl
     replacement.kind = "audition"
     broker._event(replacement, started)
     assert replacement.started_replies == 0
+
+
+async def test_model_catalog_route_is_read_only_and_validates_provider(client, broker, monkeypatch):
+    probe = AsyncMock(return_value=["small:latest"])
+    monkeypatch.setattr(module, "list_llm_models", probe)
+    headers = {"Host": "127.0.0.1:8765", "X-Voicebox-Studio": "1"}
+    response = await client.post(
+        "/api/models", json={"endpoint": "http://127.0.0.1:11435/v1"}, headers=headers
+    )
+    assert response.status == 200
+    assert await response.json() == {"models": [{"id": "small:latest", "efforts": ["none"]}]}
+    assert broker.current is None and broker.phase == "idle"
+    for body in ({"provider": "codex"}, {"provider": "remote"}, []):
+        response = await client.post("/api/models", json=body, headers=headers)
+        assert response.status == 400
+    broker.phase = "active"
+    response = await client.post("/api/models", json={"provider": "copilot"}, headers=headers)
+    assert response.status == 409
+
+
+async def test_slow_catalog_does_not_block_settings(client, broker, monkeypatch):
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def slow(*args):
+        entered.set()
+        await release.wait()
+        return ["small"]
+
+    monkeypatch.setattr(module, "list_llm_models", slow)
+    monkeypatch.setattr(module, "library_for", lambda request: SimpleNamespace(settings=lambda: {}))
+    monkeypatch.setattr(module, "provider_options", lambda: {})
+    headers = {"Host": "127.0.0.1:8765", "X-Voicebox-Studio": "1"}
+    pending = asyncio.create_task(
+        client.post("/api/models", json={"endpoint": "http://127.0.0.1:11434/v1"}, headers=headers)
+    )
+    try:
+        await entered.wait()
+        async with asyncio.timeout(0.5):
+            response = await client.get("/api/settings", headers=headers)
+            assert response.status == 200
+    finally:
+        release.set()
+        await pending

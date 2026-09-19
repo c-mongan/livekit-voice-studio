@@ -13,6 +13,13 @@ providers are unaffected.
 | Codex | Restricted-agent opt-in; preflight, memory and local-speech integration passed on macOS | None |
 
 Defaults are exactly `model="gpt-5.6-luna"` and `reasoning_effort="low"`.
+In **Settings → Connection & AI**, choose Copilot or Codex, then select an
+**AI model** and its **Reasoning level**. **Refresh models** reads your signed-in
+account's compatible model catalog without creating a conversation or sending a
+chat prompt. Codex requires its separate restricted-mode consent first. Only
+models advertising supported reasoning levels are shown; startup verifies the
+exact choice again. Existing saved choices are preserved if discovery fails.
+
 There is no automatic model fallback. Copilot model metadata must advertise
 the requested effort and must not carry a disabled or unknown policy.
 `validate()` starts an owned runtime, lists models, creates a fresh session,
@@ -170,6 +177,25 @@ The speech test passed in 43.23 seconds. The agent left its speaking state in
 used synthetic input, not a physical microphone or private conversation. Codex
 model requests remained cloud requests; command-network isolation does not make
 Codex reasoning local. See [reproduction instructions](evaluation.md#codex-with-local-speech).
+
+### Model picker validation: 19 September 2026
+
+The live picker discovered 17 compatible Copilot models and five Codex models
+for the maintainer's signed-in accounts. Counts and availability vary by account.
+Browser checks selected an alternative model and reasoning level for each
+provider without changing the saved local setup.
+
+A restricted Codex `gpt-5.5`/low two-turn check passed with correct synthetic
+memory. A separate `gpt-5.5`/medium speech check passed in 39.63 seconds with
+local LiveKit, Nemotron and Qwen, confirmed interruption of the specific SDK
+speech handle, matching follow-up text and 41,063 nonzero audio samples. Its
+speaking-state exit took 0.711 seconds; that is not audible cancellation latency.
+Original local settings were restored. These checks do not validate every model
+in either catalog or physical microphone quality.
+
+To test another exact model with the synthetic text check, add
+`STUDIO_TEST_MODEL=<model-id>` and `STUDIO_TEST_EFFORT=<supported-level>` to the
+opt-in command in [evaluation](evaluation.md).
 
 ## Isolation and lifecycle
 

@@ -341,3 +341,43 @@ async def test_unreachable_local_model_service_can_recover(server):
         await check_llm_endpoint("ollama", url, "test")
     connected = True
     await check_llm_endpoint("ollama", url, "test")
+
+
+async def test_model_listing_is_bounded_read_only_and_deduplicated(server):
+    from examples.component_endpoints import list_llm_models
+
+    requests = []
+
+    async def handler(request):
+        requests.append((request.method, request.path, request.headers.get("Authorization")))
+        return web.json_response(
+            {
+                "data": [
+                    {"id": "z:latest"},
+                    {"id": "a:small"},
+                    {"id": "z:latest"},
+                    {"id": "bad\nname"},
+                    {"id": 12},
+                ]
+            }
+        )
+
+    url = await server(handler)
+    assert await list_llm_models("ollama", url) == ["a:small", "z:latest"]
+    assert requests == [("GET", "/models", None)]
+
+
+async def test_empty_model_listing_is_valid(server):
+    from examples.component_endpoints import list_llm_models
+
+    async def handler(request):
+        return web.json_response({"data": []})
+
+    assert await list_llm_models("ollama", await server(handler)) == []
+
+
+async def test_model_listing_rejects_remote_ollama_before_request():
+    from examples.component_endpoints import list_llm_models
+
+    with pytest.raises(ValueError, match="loopback"):
+        await list_llm_models("ollama", "https://remote.invalid/v1")

@@ -192,7 +192,7 @@ afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi
 it('loads configuration only on demand, never asks for the microphone on mount', async () => {
   expect(fetchMock).not.toHaveBeenCalled();
   await click('Settings');
-  expect(host.textContent).toContain('Remote model');
+  expect(host.querySelector('select[name=llmModel]')).not.toBeNull();
   expect(host.querySelector('option[value=azure]')?.hasAttribute('disabled')).toBe(true);
   expect(host.textContent).toContain('Not configured');
 });
@@ -259,6 +259,7 @@ it('saves local transport independently with an editable Ollama model and endpoi
   expect(selects[0].value).toBe('configured');
   await act(async () => { selects[0].value = 'local'; selects[0].dispatchEvent(new Event('change', { bubbles: true })); });
   await act(async () => { selects[2].value = 'ollama'; selects[2].dispatchEvent(new Event('change', { bubbles: true })); });
+  await click('Enter name manually');
   const model = host.querySelector<HTMLInputElement>('input[name=llmModel]')!;
   expect(model.value).toBe('qwen3:1.7b');
   await act(async () => {

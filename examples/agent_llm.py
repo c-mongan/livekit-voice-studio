@@ -169,40 +169,72 @@ class AgentLLM(llm.LLM[Never]):
             assert self._metadata is not None
             return dict(self._metadata)
 
+    async def _start_catalog_runtime(self) -> list[Any]:
+        binary = self._cli_path or shutil.which(self.provider)
+        if not binary:
+            raise _error("Install the selected agent CLI before starting conversation mode.")
+        # Keep all owned runtime files below a private, newly created directory.
+        # Config discovery is disabled, including discovery through ancestors.
+        root = Path(f".voicebox-agent-{uuid.uuid4().hex}")
+        root.mkdir(mode=0o700)
+        self._workspace = root.resolve()
+        work = self._workspace / "work"
+        state = self._workspace / "state"
+        config = self._workspace / "config"
+        for directory in (work, state, config):
+            directory.mkdir(mode=0o700)
+        if self.provider == "codex":
+            self._client = _codex_client(cli_path=binary, work=work, state=state)
+        else:
+            self._client = _copilot_client(
+                cli_path=binary,
+                mode="copilot-cli",
+                working_directory=str(work),
+                base_directory=str(state),
+                builtin_plugin_directories=[],
+                log_level="none",
+                use_logged_in_user=True,
+                enable_remote_sessions=False,
+            )
+        async with asyncio.timeout(60 if self.provider == "codex" else 30):
+            await self._client.start()
+            return list(await self._client.list_models())
+
+    async def available_models(self) -> list[dict[str, Any]]:
+        """List account models on a fresh adapter without creating a conversation."""
+        async with self._lock:
+            self._check_open()
+            if self._client is not None:
+                raise _error(
+                    "Model discovery requires a fresh adapter; the conversation is unchanged."
+                )
+            try:
+                models = await self._start_catalog_runtime()
+                result = []
+                for model in models:
+                    policy = getattr(model, "policy", None)
+                    if policy is not None and policy.state != "enabled":
+                        continue
+                    efforts = getattr(model, "supported_reasoning_efforts", None)
+                    if not efforts:
+                        continue
+                    result.append({"id": model.id, "efforts": list(efforts)})
+                return result
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                raise _error(
+                    "Could not load agent models. Check CLI installation and sign-in, then retry."
+                ) from None
+            finally:
+                await self._stop_runtime()
+
     async def _ready(self) -> None:
         self._check_open()
         if self._metadata is not None:
             return
-        binary = self._cli_path or shutil.which(self.provider)
-        if not binary:
-            raise _error("Install the selected agent CLI before starting conversation mode.")
         try:
-            # Keep all owned runtime files below a private, newly created directory.
-            # Config discovery is disabled, including discovery through ancestors.
-            root = Path(f".voicebox-agent-{uuid.uuid4().hex}")
-            root.mkdir(mode=0o700)
-            self._workspace = root.resolve()
-            work = self._workspace / "work"
-            state = self._workspace / "state"
-            config = self._workspace / "config"
-            for directory in (work, state, config):
-                directory.mkdir(mode=0o700)
-            if self.provider == "codex":
-                self._client = _codex_client(cli_path=binary, work=work, state=state)
-            else:
-                self._client = _copilot_client(
-                    cli_path=binary,
-                    mode="copilot-cli",
-                    working_directory=str(work),
-                    base_directory=str(state),
-                    builtin_plugin_directories=[],
-                    log_level="none",
-                    use_logged_in_user=True,
-                    enable_remote_sessions=False,
-                )
-            async with asyncio.timeout(60 if self.provider == "codex" else 30):
-                await self._client.start()
-                models = await self._client.list_models()
+            models = await self._start_catalog_runtime()
             found = next((item for item in models if item.id == self.model), None)
             if found is None:
                 raise _error("The exact requested agent model is unavailable for this account.")

@@ -122,7 +122,7 @@ export async function studioRequest<T>(path: string, options: {
       headers: method !== 'GET' ? { 'X-Voicebox-Studio': '1', ...(!multipart ? { 'Content-Type': 'application/json' } : {}) } : undefined,
       body: multipart ? body : body ? JSON.stringify(body) : undefined,
       keepalive,
-      signal: keepalive ? undefined : AbortSignal.timeout(startingSession ? 60_000 : 15_000),
+      signal: keepalive ? undefined : AbortSignal.timeout(startingSession ? 60_000 : path === 'models' ? 90_000 : 15_000),
     });
   } catch (cause) {
     if (startingSession && cause instanceof Error && cause.name === 'TimeoutError') {

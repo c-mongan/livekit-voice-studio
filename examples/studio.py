@@ -43,6 +43,7 @@ from examples.component_endpoints import (
     ENDPOINT_PROVIDERS,
     check_llm_endpoint,
     is_loopback_url,
+    list_llm_models,
 )
 from examples.fast_qwen import FastQwenTTS
 from examples.minimal_agent import check_setup, configured_provider, provider_choices
@@ -98,6 +99,7 @@ class OwnedSession:
 class Studio:
     def __init__(self, lease: BackendLease) -> None:
         self.lease = lease
+        self.model_catalog_lock = asyncio.Lock()
         self.current: OwnedSession | None = None
         self.audition: OwnedSession | None = None
         self.phase = "idle"
@@ -1073,13 +1075,13 @@ def provider_options() -> dict[str, list[dict[str, Any]]]:
             option("openai-compatible", "Custom OpenAI-compatible endpoint", True, ""),
             option(
                 "copilot",
-                "Copilot · Luna low",
+                "Copilot · cloud",
                 shutil.which("copilot") is not None,
                 "Install and sign in to Copilot CLI.",
             ),
             option(
                 "codex",
-                "Codex · Luna low · restricted agent",
+                "Codex · restricted agent",
                 shutil.which("codex") is not None and platform.system() == "Darwin",
                 "Restricted Codex requires a verified macOS runtime and explicit consent.",
             ),
@@ -1092,6 +1094,48 @@ def provider_options() -> dict[str, list[dict[str, Any]]]:
             option("openai", "OpenAI", openai, "Set OPENAI_API_KEY on the local server."),
         ],
     }
+
+
+async def models_handler(request: web.Request) -> web.Response:
+    studio = request.app[STUDIO]
+    data = await request.json()
+    if not isinstance(data, dict):
+        raise StudioError("Expected model discovery settings.", 400)
+    provider = data.get("provider", "ollama")
+    require_idle(studio)
+    if studio.model_catalog_lock.locked():
+        raise StudioError("A model list is already loading. Wait, then refresh.", 409)
+    async with studio.model_catalog_lock:
+        try:
+            if provider == "ollama":
+                models = await list_llm_models("ollama", data.get("endpoint", ""))
+                return web.json_response(
+                    {"models": [{"id": model, "efforts": ["none"]} for model in models]}
+                )
+            if provider not in ("copilot", "codex"):
+                raise StudioError("Choose Ollama, Copilot or Codex model discovery.", 400)
+            if provider == "codex" and data.get("codexRestrictedApproved") is not True:
+                raise StudioError(
+                    "Confirm the restricted Codex boundary before loading its models.", 400
+                )
+            from livekit.agents import APIError
+
+            from examples.agent_llm import AgentLLM
+
+            adapter = AgentLLM(provider=provider, allow_restricted_agent=provider == "codex")
+            try:
+                return web.json_response({"models": await adapter.available_models()})
+            except APIError:
+                raise StudioError(
+                    "Could not load agent models. Check CLI installation and sign-in, then retry.",
+                    503,
+                ) from None
+            finally:
+                await adapter.aclose()
+        except ValueError as error:
+            raise StudioError(str(error), 400) from None
+        except RuntimeError as error:
+            raise StudioError(str(error), 503) from None
 
 
 async def settings_handler(request: web.Request) -> web.Response:
@@ -1191,6 +1235,7 @@ def create_app(studio: Studio, *, port: int = 8765, assets: Path | None = None) 
     app.router.add_post("/api/session/end", end_handler)
     for route in ("", "/status", "/audio", "/end"):
         app.router.add_post("/api/audition" + route, audition_handler)
+    app.router.add_post("/api/models", models_handler)
     app.router.add_get("/api/settings", settings_handler)
     app.router.add_post("/api/settings", settings_handler)
     app.router.add_get("/api/voices", voices_handler)

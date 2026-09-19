@@ -154,10 +154,16 @@ class StudioLibrary:
         if not isinstance(provider, str) or provider not in (*PRESETS, *ENDPOINT_PROVIDERS):
             raise LibraryError("Choose a supported reasoning provider.")
         if (
-            provider in PRESETS
+            provider in ("azure", "openai")
             and (settings["llmModel"], settings["reasoningEffort"]) != PRESETS[provider]
         ):
             raise LibraryError("The selected model and reasoning preset is not supported.")
+        if provider in ("copilot", "codex") and (
+            settings["llmModel"] == "auto"
+            or settings["reasoningEffort"]
+            not in ("none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra")
+        ):
+            raise LibraryError("Choose an explicit agent model and supported reasoning effort.")
         if settings["livekitMode"] not in ("local", "configured"):
             raise LibraryError("Choose local or configured LiveKit.")
         try:
