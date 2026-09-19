@@ -135,3 +135,20 @@ public APIs. Production build validates the bundle.
 Parent integration owns browser checks at desktop/390px, the live local API,
 microphone/autoplay permissions and a real room session. Do not substitute a
 mocked transcript or animation as evidence of a working live pipeline.
+
+## Local and cloud clarity
+
+The conversation surface shows a four-part route summary before starting, with
+explicit unknown states when the server is unavailable. "Local setup" describes
+configuration; idle UI says services are checked at start, rather than claiming
+they are already running. The privacy acknowledgement retains a disclosure of
+where audio and text go without repeating all four locations by default.
+Connection & AI settings keep Ollama's endpoint under Advanced connection;
+custom endpoints expose it immediately. Cloud AI choices explain text routing.
+Startup uses the server's reported stage and keeps existing transcript content.
+
+StatusBadge and ConversationPanelState were adapted from StatusBadge and
+ExtractionPanelState in mongo-ai/Intelligent-Document-Processor with the owner's
+explicit permission in this task. Adaptations use existing Studio tokens and
+React, without importing that project's motion, icon, or routing dependencies.
+No document-processing code, credentials, or private data was imported.

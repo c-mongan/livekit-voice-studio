@@ -288,3 +288,22 @@ fieldset:disabled .field { opacity: .65; }
   *, *::before, *::after { transition: none !important; animation: none !important; scroll-behavior: auto !important; }
   .recording-wave span { transform: scaleY(.04); }
 }
+
+.conversation-route { border-block: 1px solid var(--line); padding: 12px 0; margin: 8px 0; }
+.route-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.route-heading strong { font-size: .875rem; }
+.route-heading p { font-size: .75rem; color: var(--muted); margin: 3px 0 0; }
+.route-components { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 10px 0 0; }
+.route-components dt { color: var(--muted); font-size: .75rem; }
+.route-components dd { margin: 3px 0 0; font-size: .8125rem; overflow-wrap: anywhere; }
+.endpoint-settings { margin: 12px 0; }
+.endpoint-settings summary { cursor: pointer; padding: 12px 0; font-size: .875rem; }
+@media (max-width: 600px) { .route-components { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.route-badge { display: inline-flex; align-items: center; gap: 6px; font-size: .875rem; font-weight: 650; }
+.route-badge-local { color: var(--success); }
+.route-badge-remote { color: var(--warning); }
+.route-badge-unknown { color: var(--muted); }
+.privacy-details summary { cursor: pointer; padding: 8px 0; font-size: .8125rem; }
+.privacy-details { margin-left: 32px; }
+.privacy .privacy-details p { margin-left: 0; }
+.route-heading .button { flex-shrink: 0; }

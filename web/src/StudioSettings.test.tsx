@@ -40,7 +40,7 @@ it('opens the voice library directly without a microphone request or mutation', 
 });
 it('keeps provider settings directly accessible and returns focus to their own trigger', async () => {
   await click('Settings');
-  expect(host.querySelector('[role=tab][aria-selected=true]')?.textContent).toBe('Providers');
+  expect(host.querySelector('[role=tab][aria-selected=true]')?.textContent).toBe('Connection & AI');
   const dialog = host.querySelector('dialog')!;
   await act(async () => dialog.dispatchEvent(new Event('cancel', { cancelable: true })));
   expect(dialog.open).toBe(false);
@@ -51,7 +51,7 @@ it('keeps provider settings directly accessible and returns focus to their own t
 it('orders voice-first tabs with keyboard navigation and a single tab stop', async () => {
   await click('Voice library');
   const tabs = host.querySelector('[role=tablist]')!;
-  expect([...tabs.querySelectorAll('[role=tab]')].map((tab) => tab.textContent)).toEqual(['Voices', 'Providers']);
+  expect([...tabs.querySelectorAll('[role=tab]')].map((tab) => tab.textContent)).toEqual(['Voices', 'Connection & AI']);
   for (const [key, id] of [['End', 'providers'], ['Home', 'voices'], ['ArrowRight', 'providers'], ['ArrowLeft', 'voices']]) {
     await act(async () => tabs.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })));
     expect(document.activeElement?.id).toBe(`tab-${id}`);
@@ -65,7 +65,7 @@ it('returns focus to the guide button after an externally requested tab closes',
   document.body.append(guideButton); guideButton.focus();
   try {
     await act(async () => root.render(<StudioSettings locked={false} status={status} onChanged={changed} requestedTab="providers" />));
-    expect(host.querySelector('[role=tab][aria-selected=true]')?.textContent).toBe('Providers');
+    expect(host.querySelector('[role=tab][aria-selected=true]')?.textContent).toBe('Connection & AI');
     button('Close').focus();
     await click('Close');
     expect(document.activeElement).toBe(guideButton);

@@ -7,11 +7,13 @@ import { useStudio } from './useStudio';
 import { useStudioAgent } from './useStudioAgent';
 import { StudioSettings } from './StudioSettings';
 import { SetupGuide } from './SetupGuide';
+import { ConversationPanelState } from './components/conversation-panel-state';
+import { ConversationRoute } from './ConversationRoute';
 import { MicrophoneCheck } from './MicrophoneCheck';
 
 type Studio = ReturnType<typeof useStudio>;
 const stateCopy: Record<WorkspaceState, string> = {
-  offline: 'Server offline', ready: 'Ready', connecting: 'Connecting', listening: 'Listening',
+  offline: 'Server offline', ready: 'Ready to start', connecting: 'Preparing conversation', listening: 'Listening',
   thinking: 'Thinking', speaking: 'Speaking', reconnecting: 'Reconnecting', draining: 'Finishing session', blocked: 'Needs attention',
 };
 
@@ -287,6 +289,7 @@ function Workspace({ studio, setMuted }: { studio: Studio; setMuted: (muted: boo
         </div>
         {micCheck && !grant && !starting && !auditionBusy && <MicrophoneCheck disabled={ending} />}
         <StudioSettings onOpen={() => setMicCheck(false)} requestedTab={settingsRequest} onRequestHandled={() => setSettingsRequest(null)} status={status} locked={!online || !!grant || starting || ending || (!auditionBusy && status?.phase !== 'idle')} onChanged={studio.refresh} onRoutingChanged={() => setConsent(false)} onAuditionBusy={setAuditionBusy} />
+        <ConversationRoute status={status} online={online} locked={!canStart} onSettings={() => setSettingsRequest('providers')} />
         {!grant && <SetupGuide disabled={!online || starting || ending || auditionBusy || status?.phase !== 'idle'} onVoices={() => { setMicCheck(false); setSettingsRequest('voices'); }} onSettings={() => { setMicCheck(false); setSettingsRequest('providers'); }} />}
         <div className={`session-strip state-${state}`}>
           <div className="session-status"><span className="state-dot" /><strong role="status">{auditionBusy ? 'Audition in progress' : stateCopy[state]}</strong></div>
@@ -309,7 +312,8 @@ function Workspace({ studio, setMuted }: { studio: Studio; setMuted: (muted: boo
           {connected && <StartAudio className="button audio-unlock" label="Enable speaker audio" />}
         </div>
         {!grant && <div className="privacy">
-          <label><input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} /><span>I understand this conversation’s route. {online && status?.livekit.local === true ? 'LiveKit on this computer carries audio and text.' : online && status?.livekit.local === false ? 'A remote LiveKit server carries audio and text.' : 'LiveKit: Location not reported.'} {online && status?.stt ? status.stt.local ? 'Speech recognition processes audio on this computer.' : 'Cloud speech recognition processes audio.' : 'Speech recognition: Location not reported.'} {online && status?.ai.local === true ? 'Reasoning processes text on this computer.' : online && status?.ai.local === false ? 'Remote reasoning processes conversation text.' : 'Reasoning: Location not reported.'}</span></label>
+          <label><input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} /><span>I understand where this conversation runs.</span></label>
+          <details className="privacy-details"><summary>Where audio and text go</summary><p>{online && status?.livekit.local === true ? 'LiveKit on this computer carries audio and text.' : online && status?.livekit.local === false ? 'A remote LiveKit server carries audio and text.' : 'LiveKit: Location not reported.'} {online && status?.stt ? status.stt.local ? 'Speech recognition processes audio on this computer.' : 'Cloud speech recognition processes audio.' : 'Speech recognition: Location not reported.'} {online && status?.ai.local === true ? 'Reasoning processes text on this computer.' : online && status?.ai.local === false ? 'Remote reasoning processes conversation text.' : 'Reasoning: Location not reported.'}</p></details>
           <p>Speech is generated locally. No microphone access until you turn it on. This page keeps transcripts in memory, not browser storage.</p>
         </div>}
         <div className="notices" aria-live="polite">
@@ -325,8 +329,10 @@ function Workspace({ studio, setMuted }: { studio: Studio; setMuted: (muted: boo
             const element = event.currentTarget;
             follow.current = !messages.length || element.scrollHeight - element.scrollTop - element.clientHeight < 64;
           }}>
+            <ConversationPanelState messageCount={messages.length} preparing={starting || status?.phase === 'starting'} message={safeMessage(status?.message, '')}>
             {messages.length === 0 ? <div className="empty-conversation"><span className="empty-symbol" aria-hidden="true">“</span><h3>Make room for a good conversation.</h3><p>Ask a question below, or start a session and turn on your microphone. Your words and the agent’s replies will appear here.</p><button className="text-link" onClick={() => { setDraft('Explain how this voice pipeline works.'); composer.current?.focus(); }}>Try “Explain how this voice pipeline works” <span aria-hidden="true">↗</span></button></div> :
               messages.map((message) => <article className={`message message-${message.role}`} key={message.id}><div className="message-meta"><strong>{message.role === 'you' ? 'You' : 'Agent'}</strong><time dateTime={new Date(message.timestamp).toISOString()}>{new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time></div><p>{message.message}</p></article>)}
+            </ConversationPanelState>
           </div>
           <form className="composer" onSubmit={(event) => void submit(event)}>
             <label className="sr-only" htmlFor="message">Message your agent</label>
