@@ -10,16 +10,17 @@ let root: Root;
 let host: HTMLDivElement;
 let locked = false;
 const changed = vi.fn();
+const routingChanged = vi.fn();
 const settings = {
   sttProvider: 'nemotron', llmProvider: 'copilot', llmModel: 'gpt-5.6-luna', reasoningEffort: 'low', voiceId: 'one',
   providers: {
     stt: [{ id: 'nemotron', label: 'Nemotron', available: true }, { id: 'azure', label: 'Azure', available: false, reason: 'Not configured' }],
-    llm: [{ id: 'copilot', label: 'Copilot', available: true }, { id: 'codex', label: 'Codex', available: true }],
+    llm: [{ id: 'copilot', label: 'Copilot', available: true }, { id: 'codex', label: 'Codex', available: true }, { id: 'ollama', label: 'Ollama', available: true }, { id: 'openai-compatible', label: 'Custom endpoint', available: true }],
   },
 };
 const fetchMock = vi.fn();
 let status: StudioStatus;
-function render() { root.render(<StudioSettings locked={locked} status={status} onChanged={changed} />); }
+function render() { root.render(<StudioSettings locked={locked} status={status} onChanged={changed} onRoutingChanged={routingChanged} />); }
 function button(text: string) {
   const element = [...host.querySelectorAll('button')].find((item) => item.textContent?.trim() === text);
   if (!element) throw new Error(`Missing button ${text}`);
@@ -39,7 +40,7 @@ it('opens the voice library directly without a microphone request or mutation', 
 });
 it('keeps provider settings directly accessible and returns focus to their own trigger', async () => {
   await click('Settings');
-  expect(host.querySelector('[role=tab][aria-selected=true]')?.textContent).toBe('Providers');
+  expect(host.querySelector('[role=tab][aria-selected=true]')?.textContent).toBe('Connection & AI');
   const dialog = host.querySelector('dialog')!;
   await act(async () => dialog.dispatchEvent(new Event('cancel', { cancelable: true })));
   expect(dialog.open).toBe(false);
@@ -50,13 +51,25 @@ it('keeps provider settings directly accessible and returns focus to their own t
 it('orders voice-first tabs with keyboard navigation and a single tab stop', async () => {
   await click('Voice library');
   const tabs = host.querySelector('[role=tablist]')!;
-  expect([...tabs.querySelectorAll('[role=tab]')].map((tab) => tab.textContent)).toEqual(['Voices', 'Providers']);
-  for (const [key, id] of [['End', 'providers'], ['Home', 'voices'], ['ArrowRight', 'providers'], ['ArrowLeft', 'voices']]) {
+  expect([...tabs.querySelectorAll('[role=tab]')].map((tab) => tab.textContent)).toEqual(['Voices', 'Connection & AI', 'Audio', 'Appearance']);
+  for (const [key, id] of [['End', 'appearance'], ['Home', 'voices'], ['ArrowRight', 'providers'], ['ArrowRight', 'audio'], ['ArrowRight', 'appearance'], ['ArrowRight', 'voices'], ['ArrowLeft', 'appearance']]) {
     await act(async () => tabs.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })));
     expect(document.activeElement?.id).toBe(`tab-${id}`);
     expect(tabs.querySelector('[aria-selected=true]')?.id).toBe(`tab-${id}`);
     expect(tabs.querySelectorAll('[tabindex="0"]')).toHaveLength(1);
   }
+});
+it('returns focus to the guide button after an externally requested tab closes', async () => {
+  await click('Voice library'); await click('Close');
+  const guideButton = document.createElement('button');
+  document.body.append(guideButton); guideButton.focus();
+  try {
+    await act(async () => root.render(<StudioSettings locked={false} status={status} onChanged={changed} requestedTab="providers" />));
+    expect(host.querySelector('[role=tab][aria-selected=true]')?.textContent).toBe('Connection & AI');
+    button('Close').focus();
+    await click('Close');
+    expect(document.activeElement).toBe(guideButton);
+  } finally { guideButton.remove(); }
 });
 beforeEach(async () => {
   locked = false;
@@ -188,13 +201,14 @@ it('saves only allowed configuration fields with a CSRF header', async () => {
   await click('Save settings');
   const call = fetchMock.mock.calls.find(([, init]) => init.method === 'POST')!;
   expect(call[0]).toBe('/api/settings');
-  expect(JSON.parse(call[1].body)).toEqual({ sttProvider: 'nemotron', llmProvider: 'copilot', llmModel: 'gpt-5.6-luna', reasoningEffort: 'low', codexRestrictedApproved: false });
+  expect(JSON.parse(call[1].body)).toEqual({ sttProvider: 'nemotron', llmProvider: 'copilot', llmModel: 'gpt-5.6-luna', reasoningEffort: 'low', codexRestrictedApproved: false, livekitMode: 'configured', llmBaseUrl: 'http://127.0.0.1:11434/v1' });
   expect(call[1].headers['X-Voicebox-Studio']).toBe('1');
   expect(changed).toHaveBeenCalled();
+  expect(routingChanged).toHaveBeenCalledOnce();
 });
 it('requires explicit restricted Codex consent and resets it when the provider changes', async () => {
   await click('Settings');
-  const select = host.querySelectorAll('select')[1];
+  const select = host.querySelectorAll('select')[2];
   await act(async () => { select.value = 'codex'; select.dispatchEvent(new Event('change', { bubbles: true })); });
   expect(host.textContent).toContain('This is not tool-free mode');
   expect(button('Save settings').disabled).toBe(true);
@@ -211,6 +225,9 @@ it('blocks all configuration mutations while a session is active', async () => {
   await act(async () => render());
   await click('Settings');
   expect(button('Save settings').disabled).toBe(true);
+  expect([...host.querySelectorAll('select')].every((select) => select.matches(':disabled'))).toBe(true);
+  await click('Save settings');
+  expect(fetchMock.mock.calls.some(([, init]) => init.method === 'POST')).toBe(false);
   await click('Voices');
   expect(button('Record a voice').disabled).toBe(true);
   expect(button('Use next session').disabled).toBe(true);
@@ -233,4 +250,50 @@ it('keeps failed saves visibly unsuccessful without exposing raw diagnostics', a
   await click('Save settings');
   expect(host.querySelector('[role=alert]')?.textContent).toContain('End the active session first');
   expect(changed).not.toHaveBeenCalled();
+  expect(routingChanged).not.toHaveBeenCalled();
+});
+
+it('saves local transport independently with an editable Ollama model and endpoint', async () => {
+  await click('Settings');
+  const selects = host.querySelectorAll('select');
+  expect(selects[0].value).toBe('configured');
+  await act(async () => { selects[0].value = 'local'; selects[0].dispatchEvent(new Event('change', { bubbles: true })); });
+  await act(async () => { selects[2].value = 'ollama'; selects[2].dispatchEvent(new Event('change', { bubbles: true })); });
+  const model = host.querySelector<HTMLInputElement>('input[name=llmModel]')!;
+  expect(model.value).toBe('qwen3:1.7b');
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(model, 'my-local-model');
+    model.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await click('Save settings');
+  const body = JSON.parse(fetchMock.mock.calls.find(([, init]) => init.method === 'POST')![1].body);
+  expect(body).toMatchObject({ livekitMode: 'local', llmProvider: 'ollama', llmModel: 'my-local-model', reasoningEffort: 'none', sttProvider: 'nemotron', llmBaseUrl: 'http://127.0.0.1:11434/v1' });
+});
+it('explains custom endpoint privacy and keeps credentials outside the form', async () => {
+  await click('Settings');
+  const select = host.querySelectorAll('select')[2];
+  await act(async () => { select.value = 'openai-compatible'; select.dispatchEvent(new Event('change', { bubbles: true })); });
+  expect(host.textContent).toContain('VOICEBOX_CUSTOM_LLM_API_KEY');
+  expect(host.querySelector('input[name=llmBaseUrl]')).not.toBeNull();
+  expect(host.querySelector('input[type=password]')).toBeNull();
+});
+it('preserves a custom Ollama port through a cloud provider round trip', async () => {
+  const original = fetchMock.getMockImplementation()!;
+  fetchMock.mockImplementation((url: string) => url.endsWith('/settings') ? Promise.resolve(new Response(JSON.stringify({ ...settings, llmProvider: 'ollama', llmModel: 'qwen3:1.7b', llmBaseUrl: 'http://127.0.0.1:11435/v1' }))) : original(url));
+  await click('Settings');
+  const select = host.querySelectorAll('select')[2];
+  for (const provider of ['copilot', 'ollama']) {
+    await act(async () => { select.value = provider; select.dispatchEvent(new Event('change', { bubbles: true })); });
+  }
+  expect(host.querySelector<HTMLInputElement>('input[name=llmBaseUrl]')!.value).toBe('http://127.0.0.1:11435/v1');
+  await click('Save settings');
+  expect(JSON.parse(fetchMock.mock.calls.find(([, init]) => init.method === 'POST')![1].body).llmBaseUrl).toBe('http://127.0.0.1:11435/v1');
+});
+it.each(['https://models.example/v1', 'not a URL', 'http://user:secret@localhost:11435/v1', 'http://localhost:11435/v1?token=secret'])('resets a remote or invalid custom endpoint when choosing Ollama: %s', async (endpoint) => {
+  const original = fetchMock.getMockImplementation()!;
+  fetchMock.mockImplementation((url: string) => url.endsWith('/settings') ? Promise.resolve(new Response(JSON.stringify({ ...settings, llmProvider: 'openai-compatible', llmModel: 'custom-model', llmBaseUrl: endpoint }))) : original(url));
+  await click('Settings');
+  const select = host.querySelectorAll('select')[2];
+  await act(async () => { select.value = 'ollama'; select.dispatchEvent(new Event('change', { bubbles: true })); });
+  expect(host.querySelector<HTMLInputElement>('input[name=llmBaseUrl]')!.value).toBe('http://127.0.0.1:11434/v1');
 });

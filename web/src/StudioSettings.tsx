@@ -1,22 +1,39 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, errorMessage, studioRequest, type LocalVoice, type StudioConfig, type StudioStatus, type VoiceLibrary } from './api';
+import { AppearanceSettings } from './components/appearance-settings';
 import { VoiceEnrollment } from './VoiceEnrollment';
 import { useVoiceAudition } from './useVoiceAudition';
 import { VoiceAudition } from './VoiceAudition';
 
+const defaultEndpoint = 'http://127.0.0.1:11434/v1';
+function ollamaEndpoint(current: string | undefined): string {
+  if (!current || current.length > 2048 || /[\s\u0000-\u001f\u007f?#]/.test(current)) return defaultEndpoint;
+  try {
+    const url = new URL(current);
+    const loopback = url.hostname === 'localhost' || url.hostname === '[::1]' || /^127(?:\.\d{1,3}){3}$/.test(url.hostname);
+    return loopback && ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password && url.port !== '0'
+      ? current : defaultEndpoint;
+  } catch { return defaultEndpoint; }
+}
 const presets: Record<string, { model: string; effort: string }> = {
+  ollama: { model: 'qwen3:1.7b', effort: 'none' }, 'openai-compatible': { model: '', effort: 'none' },
   copilot: { model: 'gpt-5.6-luna', effort: 'low' }, codex: { model: 'gpt-5.6-luna', effort: 'low' },
   azure: { model: 'gpt-4.1-nano', effort: '' }, openai: { model: 'gpt-4.1-mini', effort: '' },
 };
 
-export function StudioSettings({ locked, onChanged, status, onAuditionBusy }: {
+export function StudioSettings({ locked, onChanged, status, onAuditionBusy, requestedTab, onRequestHandled, onOpen, onRoutingChanged, hideTriggers = false, onMicCheck }: {
+  hideTriggers?: boolean; onMicCheck?: () => void;
   locked: boolean; onChanged: () => void | Promise<void>; status?: StudioStatus | null;
   onAuditionBusy?: (busy: boolean) => void;
+  requestedTab?: 'providers' | 'voices' | null;
+  onRequestHandled?: () => void;
+  onOpen?: () => void;
+  onRoutingChanged?: () => void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
-  const trigger = useRef<HTMLButtonElement>(null);
+  const trigger = useRef<HTMLElement | null>(null);
   const [open, setOpen] = useState(false);
-  const [tab, setTab] = useState<'providers' | 'voices'>('voices');
+  const [tab, setTab] = useState<'providers' | 'voices' | 'audio' | 'appearance'>('voices');
   const [config, setConfig] = useState<StudioConfig | null>(null);
   const [library, setLibrary] = useState<VoiceLibrary | null>(null);
   const [loading, setLoading] = useState(false);
@@ -41,7 +58,7 @@ export function StudioSettings({ locked, onChanged, status, onAuditionBusy }: {
     try {
       const [settings, voices] = await Promise.all([api<StudioConfig>('settings'), api<VoiceLibrary>('voices')]);
       if (request.current !== id) return;
-      setConfig(settings); setLibrary(voices);
+      setConfig({ ...settings, livekitMode: settings.livekitMode ?? 'configured', llmBaseUrl: settings.llmBaseUrl ?? defaultEndpoint }); setLibrary(voices);
     } catch (cause) { if (request.current === id) setError(errorMessage(cause, 'Configuration could not be loaded. Check the local server and retry.')); }
     finally { if (request.current === id) setLoading(false); }
   }
@@ -49,6 +66,12 @@ export function StudioSettings({ locked, onChanged, status, onAuditionBusy }: {
     if (open) { dialog.current?.showModal(); void load(); }
     return () => { request.current++; };
   }, [open]);
+  useEffect(() => {
+    if (requestedTab && !locked) {
+      if (!open) trigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      onOpen?.(); setTab(requestedTab); setOpen(true); onRequestHandled?.();
+    }
+  }, [requestedTab, locked, onRequestHandled]);
   useEffect(() => {
     if (locked) {
       if (audition.busy || audition.url) audition.cancel();
@@ -61,37 +84,39 @@ export function StudioSettings({ locked, onChanged, status, onAuditionBusy }: {
     setOpen(false); setEnrolling(false); setPreview(null); setFocusedVoice(null); setDeleting(null); setRenaming(null); setNotice('');
     dialog.current?.close(); trigger.current?.focus();
   }
-  async function mutate(action: () => Promise<unknown>, success: string) {
+  async function mutate(action: () => Promise<unknown>, success: string, routingChanged = false) {
     if (disabled || inFlight.current) return;
     audition.cancel();
     inFlight.current = true; setBusy(true); setError(null); setNotice('');
-    try { await action(); setNotice(success); setDeleting(null); setRenaming(null); await load(); await onChanged(); }
+    try { await action(); if (routingChanged) onRoutingChanged?.(); setNotice(success); setDeleting(null); setRenaming(null); await load(); await onChanged(); }
     catch (cause) { setError(errorMessage(cause, 'The change could not be saved. Check the local server and retry.')); }
     finally { inFlight.current = false; setBusy(false); }
   }
-  const switchTab = (next: 'providers' | 'voices') => { if (!enrolling) { audition.cancel(); setFocusedVoice(null); setTab(next); setPreview(null); setDeleting(null); } };
+  const switchTab = (next: 'providers' | 'voices' | 'audio' | 'appearance') => { if (!enrolling) { audition.cancel(); setFocusedVoice(null); setTab(next); setPreview(null); setDeleting(null); } };
   function openDrawer(next: 'providers' | 'voices', source: HTMLButtonElement) {
+    onOpen?.();
     trigger.current = source;
     setTab(next);
     setOpen(true);
   }
   return <>
-    <div className="setup-entry">
+    {!hideTriggers && <div className="setup-entry">
       <button className="button secondary settings-trigger" aria-haspopup="dialog" onClick={(event) => openDrawer('voices', event.currentTarget)}>Voice library</button>
       <button className="button quiet settings-trigger" aria-haspopup="dialog" onClick={(event) => openDrawer('providers', event.currentTarget)}>Settings</button>
       {!locked && <span className="field-help">{audition.busy ? 'Local audition running · other changes paused' : 'Record → audition → choose → chat'}</span>}
-    </div>
+    </div>}
     <dialog className="settings-drawer" ref={dialog} aria-labelledby="settings-title" onCancel={(event) => { event.preventDefault(); close(); }}>
       {open && <>
-        <header className="drawer-header"><div><h2 id="settings-title">Make it yours</h2><p>Providers and private voices</p></div><button className="button quiet" disabled={busy} onClick={close} aria-label="Close settings">Close</button></header>
+        <header className="drawer-header"><div><h2 id="settings-title">Make it yours</h2><p>Choose where your conversation runs</p></div><button className="button quiet" disabled={busy} onClick={close} aria-label="Close settings">Close</button></header>
         <div className="drawer-tabs" role="tablist" aria-label="Studio configuration" onKeyDown={(event) => {
           if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key) && !enrolling) {
             event.preventDefault();
-            const next = event.key === 'Home' ? 'voices' : event.key === 'End' ? 'providers' : tab === 'providers' ? 'voices' : 'providers';
+            const tabs = ['voices', 'providers', 'audio', 'appearance'] as const;
+            const next = tabs[event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : (tabs.indexOf(tab) + (event.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length];
             switchTab(next); document.getElementById(`tab-${next}`)?.focus();
           }
         }}>
-          {(['voices', 'providers'] as const).map((value) => <button key={value} className="button quiet" id={`tab-${value}`} role="tab" aria-selected={tab === value} aria-controls={`panel-${value}`} tabIndex={tab === value ? 0 : -1} disabled={enrolling} onClick={() => switchTab(value)}>{value === 'providers' ? 'Providers' : 'Voices'}</button>)}
+          {(['voices', 'providers', 'audio', 'appearance'] as const).map((value) => <button key={value} className="button quiet" id={`tab-${value}`} role="tab" aria-selected={tab === value} aria-controls={`panel-${value}`} tabIndex={tab === value ? 0 : -1} disabled={enrolling} onClick={() => switchTab(value)}>{value === 'providers' ? 'Connection & AI' : value === 'audio' ? 'Audio' : value === 'appearance' ? 'Appearance' : 'Voices'}</button>)}
         </div>
         <div className="drawer-body">
           {locked && <p className="notice warning">End the conversation and wait for cleanup before changing settings or recording a voice.</p>}
@@ -100,25 +125,33 @@ export function StudioSettings({ locked, onChanged, status, onAuditionBusy }: {
           {error && <div className="notice error" role="alert"><p>{error}</p><button className="button quiet" disabled={busy} onClick={() => void load()}>Retry</button></div>}
           {notice && <p className="save-notice" role="status">{notice}</p>}
           {loading && <p className="loading-line" role="status">Loading local configuration...</p>}
+          {tab === 'appearance' && <AppearanceSettings />}
+          {tab === 'audio' && <section role="tabpanel" id="panel-audio" aria-labelledby="tab-audio"><h3 className="drawer-section-title">Your microphone and voice</h3><p className="field-help">Microphone access starts only when you turn it on. You can always type instead.</p><div className="audio-settings-row"><h4>Microphone check</h4><p>Record and play back a short test before your conversation.</p>{onMicCheck && <button className="button secondary" disabled={locked} onClick={() => { close(); onMicCheck(); }}>Check microphone</button>}</div><div className="audio-settings-row"><h4>Speech recognition</h4><p>Choose local Nemotron or a configured cloud service.</p><button className="button secondary" onClick={() => switchTab('providers')}>Choose speech service</button></div><div className="audio-settings-row"><h4>Speaking voice</h4><p>Your cloned voice is generated locally with Qwen.</p><button className="button secondary" onClick={() => switchTab('voices')}>Choose speaking voice</button></div></section>}
           {tab === 'providers' && config && <section role="tabpanel" id="panel-providers" aria-labelledby="tab-providers">
-            <h3 className="drawer-section-title">The path from speech to reply</h3>
-            <p className="field-help">Changes apply to the next session. Credentials stay on the server.</p>
+            <h3 className="drawer-section-title">Your conversation setup</h3>
+            <p className="field-help">Start local. Change individual components when you need cloud services. Changes apply to the next session.</p>
             <fieldset disabled={disabled} className="provider-fields">
+              <label className="field">Connection<select value={config.livekitMode} onChange={(event) => setConfig({ ...config, livekitMode: event.target.value as 'local' | 'configured' })}><option value="local">Local LiveKit · default</option><option value="configured">Configured cloud or self-hosted server</option></select></label>
+              <p className="route-note">{config.livekitMode === 'local' ? 'Conversation audio and text travel through LiveKit on this computer. Start the local LiveKit server before connecting.' : 'Conversation audio and text travel through your configured LiveKit server. Its address and credentials stay in the server’s .env file.'}</p>
               <label className="field">Speech recognition<select value={config.sttProvider} onChange={(event) => setConfig({ ...config, sttProvider: event.target.value })}>{config.providers.stt.map((provider) => <option key={provider.id} value={provider.id} disabled={!provider.available}>{provider.label}{!provider.available ? ' - unavailable' : ''}</option>)}</select></label>
               <p className="route-note">{config.sttProvider === 'nemotron' ? 'Local recognition. Microphone audio is transcribed on this machine.' : 'Cloud recognition. Microphone audio is sent to your selected speech provider.'}</p>
               {config.providers.stt.filter((provider) => !provider.available).map((provider) => <p className="field-help" key={provider.id}>{provider.label}: {provider.reason || 'Not available on this server.'}</p>)}
-              <label className="field">Reasoning provider<select value={config.llmProvider} onChange={(event) => {
+              <label className="field">AI provider<select value={config.llmProvider} onChange={(event) => {
                 const provider = event.target.value; const preset = presets[provider];
-                if (preset) setConfig({ ...config, llmProvider: provider, llmModel: preset.model, reasoningEffort: preset.effort, codexRestrictedApproved: false });
+                if (preset) setConfig({ ...config, llmProvider: provider, llmModel: preset.model, reasoningEffort: preset.effort, codexRestrictedApproved: false, llmBaseUrl: provider === 'ollama' ? ollamaEndpoint(config.llmBaseUrl) : config.llmBaseUrl });
               }}>{config.providers.llm.map((provider) => <option key={provider.id} value={provider.id} disabled={!provider.available || !presets[provider.id]}>{provider.label}{!provider.available ? ' - unavailable' : ''}</option>)}</select></label>
-              <div className="model-summary"><span>Remote model</span><strong>{config.llmModel}</strong>{config.reasoningEffort && config.reasoningEffort !== 'none' && <span>Reasoning effort: {config.reasoningEffort}</span>}</div>
-              <p className="route-note">Conversation text goes to this provider. Copilot and Codex use remote models, not local inference. Runtime availability is checked when connecting.</p>
+              {['ollama', 'openai-compatible'].includes(config.llmProvider) ? <>
+                <label className="field">Model name<input name="llmModel" value={config.llmModel} onChange={(event) => setConfig({ ...config, llmModel: event.target.value })} placeholder={config.llmProvider === 'ollama' ? 'qwen3:1.7b' : 'Model available at your endpoint'} /></label>
+                <details className="endpoint-settings" key={config.llmProvider} open={config.llmProvider === 'openai-compatible' ? true : undefined}><summary>Advanced connection</summary><label className="field">API endpoint<input name="llmBaseUrl" type="url" value={config.llmBaseUrl} onChange={(event) => setConfig({ ...config, llmBaseUrl: event.target.value })} /></label></details>
+                <p className="route-note">{config.llmProvider === 'ollama' ? 'Local reasoning. Start Ollama and prepare the named model first. Use a loopback endpoint on this computer; models are never downloaded automatically. The first reply can take longer while the model loads. On a 16 GB Mac, start with a small model.' : 'Conversation text is sent to this endpoint. Its location determines whether reasoning is local or remote. If it needs an API key, set VOICEBOX_CUSTOM_LLM_API_KEY in the server’s .env file.'}</p>
+              </> : <><div className="model-summary"><span>Remote model</span><strong>{config.llmModel}</strong>{config.reasoningEffort && config.reasoningEffort !== 'none' && <span>Reasoning effort: {config.reasoningEffort}</span>}</div>
+              <p className="route-note">Your conversation text goes to the selected remote AI provider. Your connection and speech recognition choices stay as selected above.</p></>}
               {config.llmProvider === 'codex' && <label className="consent"><input type="checkbox" checked={config.codexRestrictedApproved === true} onChange={(event) => setConfig({ ...config, codexRestrictedApproved: event.target.checked })} /><span>I accept restricted Codex: commands are limited to a private workspace and minimal runtime files, command networking and external tools are disabled, and my global Codex instructions are trusted. This is not tool-free mode.</span></label>}
               {config.providers.llm.filter((provider) => !provider.available).map((provider) => <p className="field-help" key={provider.id}>{provider.label}: {provider.reason || 'Not available on this server.'}</p>)}
               <div className="local-synthesis"><strong>Speech synthesis stays local</strong><p>Your selected voice is used by Qwen on this machine. The reference recording is not sent to LiveKit or your reasoning provider.</p></div>
-              <button className="button primary" disabled={disabled || (config.llmProvider === 'codex' && !config.codexRestrictedApproved) || !config.providers.stt.find((p) => p.id === config.sttProvider)?.available || !config.providers.llm.find((p) => p.id === config.llmProvider)?.available} onClick={() => void mutate(() => api('settings', { sttProvider: config.sttProvider, llmProvider: config.llmProvider, llmModel: config.llmModel, reasoningEffort: config.reasoningEffort, codexRestrictedApproved: config.codexRestrictedApproved === true }), 'Settings saved for the next session.')}>{busy ? 'Saving...' : 'Save settings'}</button>
+              <button className="button primary" disabled={disabled || !config.llmModel.trim() || (['ollama', 'openai-compatible'].includes(config.llmProvider) && !config.llmBaseUrl?.trim()) || (config.llmProvider === 'codex' && !config.codexRestrictedApproved) || !config.providers.stt.find((p) => p.id === config.sttProvider)?.available || !config.providers.llm.find((p) => p.id === config.llmProvider)?.available} onClick={() => void mutate(() => api('settings', { livekitMode: config.livekitMode, llmBaseUrl: config.llmBaseUrl, sttProvider: config.sttProvider, llmProvider: config.llmProvider, llmModel: config.llmModel, reasoningEffort: config.reasoningEffort, codexRestrictedApproved: config.codexRestrictedApproved === true }), 'Settings saved for the next session.', true)}>{busy ? 'Saving...' : 'Save settings'}</button>
             </fieldset>
-            <p className="privacy-footnote">LiveKit still transports conversation audio and text between this browser and the agent. Local speech recognition does not make the entire conversation local.</p>
+            <p className="privacy-footnote">Connection, speech recognition and reasoning are independent choices. Review the conversation privacy notice after saving; local recognition alone does not make the entire conversation local.</p>
           </section>}
           {tab === 'voices' && library && <section role="tabpanel" id="panel-voices" aria-labelledby="tab-voices">
             {enrolling ? <VoiceEnrollment guidedText={library.guidedText} locked={locked} onCancel={() => setEnrolling(false)} onSaved={async (voice) => { setEnrolling(false); setFocusedVoice(voice.id); setNotice('Private voice saved. Generate a sample below to hear the clone, then choose it for chat.'); await load(); await onChanged(); }} /> : <>

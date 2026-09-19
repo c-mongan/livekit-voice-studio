@@ -39,8 +39,10 @@ Python wheel is only the LiveKit provider library, not a Studio installer.
   validation. Existing package caches may be reused during installation.
 - Apple Silicon is the supported local fast-voice path. Linux CI validates Python
   logic, not MLX audio. Windows and broad device compatibility are not claimed.
-- Local speech processing still uses remote transport and reasoning. Users provide
-  their own entitled accounts; the code license supplies no subscription access.
+- New libraries default to local LiveKit and Ollama with local recognition and
+  synthesis; existing settings are preserved. Remote transport and reasoning are
+  independent opt-in choices requiring the user’s own services/accounts. The code
+  license supplies no subscription access. Local routing is not offline certification.
 - Model licenses and dependency notices are separate from project MIT licensing.
   No bundled-model or binary distribution is prepared in this preview.
 

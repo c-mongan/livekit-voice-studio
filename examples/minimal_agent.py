@@ -14,6 +14,13 @@ from livekit.agents import Agent, AgentServer, AgentSession, JobContext, JobRequ
 from livekit.plugins import openai, silero, voicebox
 from livekit.plugins.voicebox.errors import VoiceboxError
 
+# Direct script execution puts examples/, not the checkout root, on sys.path.
+# Preserve the documented CLI and its lazy package imports without PYTHONPATH.
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from examples.component_endpoints import DEFAULT_LLM_URL, ENDPOINT_PROVIDERS, validate_endpoint
+
 server = AgentServer(host="127.0.0.1")
 logger = logging.getLogger("voicebox.example")
 _room_accepted = False
@@ -74,7 +81,7 @@ async def configured_ai() -> tuple[stt.STT[Never], llm.LLM[Never]]:
     speech_choice, reasoning_choice = provider_choices()
     if speech_choice not in ("azure", "openai", "nemotron"):
         raise RuntimeError("Unsupported speech recognition provider.")
-    if reasoning_choice not in ("azure", "openai", "copilot", "codex"):
+    if reasoning_choice not in ("azure", "openai", "copilot", "codex", *ENDPOINT_PROVIDERS):
         raise RuntimeError("Unsupported reasoning provider.")
     language_model: llm.LLM[Never]
     if reasoning_choice == "azure":
@@ -88,6 +95,23 @@ async def configured_ai() -> tuple[stt.STT[Never], llm.LLM[Never]]:
         )
     elif reasoning_choice == "openai":
         language_model = openai.LLM(model="gpt-4.1-mini")
+    elif reasoning_choice in ENDPOINT_PROVIDERS:
+        from examples.endpoint_llm import EndpointLLM
+
+        model = os.environ.get("VOICEBOX_LLM_MODEL", "qwen3:1.7b")
+        endpoint = validate_endpoint(
+            reasoning_choice, os.environ.get("VOICEBOX_LLM_BASE_URL", DEFAULT_LLM_URL), model
+        )
+        language_model = EndpointLLM(
+            provider=reasoning_choice,
+            model=model,
+            base_url=endpoint,
+            api_key=(
+                "ollama"
+                if reasoning_choice == "ollama"
+                else os.environ.get("VOICEBOX_CUSTOM_LLM_API_KEY") or "not-required"
+            ),
+        )
     else:
         from examples.agent_llm import AgentLLM
 
@@ -167,8 +191,18 @@ async def check_setup(*, require_loaded: bool = True, local_voice: bool = False)
             problems.append(f"Install and sign in to the selected {choice} CLI.")
         if choice == "codex" and os.environ.get("VOICEBOX_CODEX_RESTRICTED") != "1":
             problems.append("Confirm restricted Codex mode in Studio settings before connecting.")
+    elif choice in ENDPOINT_PROVIDERS:
+        try:
+            validate_endpoint(
+                choice,
+                os.environ.get("VOICEBOX_LLM_BASE_URL", DEFAULT_LLM_URL),
+                os.environ.get("VOICEBOX_LLM_MODEL", "qwen3:1.7b"),
+                os.environ.get("VOICEBOX_REASONING_EFFORT", "none"),
+            )
+        except ValueError as error:
+            problems.append(str(error))
     elif choice not in ("openai", "azure"):
-        problems.append("Choose Azure, OpenAI, Copilot or Codex for reasoning.")
+        problems.append("Choose a supported reasoning provider.")
     if speech_choice == "nemotron":
         binary = os.environ.get("NEMOTRON_SERVER_BINARY", "")
         model_path = os.environ.get("NEMOTRON_MODEL_PATH", "")

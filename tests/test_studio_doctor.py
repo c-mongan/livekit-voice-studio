@@ -323,6 +323,15 @@ def test_static_contracts_match_runtime_limits_and_valid_snapshot(configured):
             "codexRestrictedApproved": True,
         },
         {"llmProvider": "azure", "llmModel": "gpt-4.1-nano"},
+        {"llmProvider": "ollama", "llmModel": "qwen3:1.7b", "livekitMode": "local"},
+        {
+            "llmProvider": "openai-compatible",
+            "llmModel": "custom",
+            "llmBaseUrl": "https://example.test/v1",
+        },
+        {"llmProvider": "ollama", "llmModel": "qwen3:1.7b", "llmBaseUrl": "https://remote.test/v1"},
+        {"llmBaseUrl": "https://user:secret@example.test/v1"},
+        {"livekitMode": "unsupported"},
         {"sttProvider": "unsupported"},
         {"sttProvider": []},
         {"llmProvider": []},
@@ -495,6 +504,10 @@ def test_shell_launcher_fresh_checkout_json_without_env_or_home_library(setup):
     root, env = setup
     source = Path(__file__).resolve().parents[1]
     (root / "tools").mkdir()
+    (root / "examples").mkdir()
+    shutil.copyfile(
+        source / "examples/component_endpoints.py", root / "examples/component_endpoints.py"
+    )
     (root / ".venv/bin").mkdir(parents=True)
     (root / ".venv/bin/python").symlink_to(sys.executable)
     shutil.copyfile(source / "studio", root / "studio")
@@ -559,3 +572,35 @@ def test_existing_launcher_routes_doctor_before_macos_service(
     captured = capsys.readouterr()
     checks(json.loads(captured.out))
     assert not captured.err
+
+
+def test_first_run_local_mode_resolves_dev_transport_without_mutation(setup):
+    root, env = setup
+    env.update(
+        VOICEBOX_LIVEKIT_MODE="local",
+        VOICEBOX_LLM_PROVIDER="ollama",
+        VOICEBOX_LLM_MODEL="qwen3:1.7b",
+        VOICEBOX_REASONING_EFFORT="none",
+        LIVEKIT_URL="",
+        LIVEKIT_API_KEY="",
+        LIVEKIT_API_SECRET="",
+    )
+    original = env.copy()
+    before = set(root.rglob("*"))
+    report = doctor.run_checks(root, env)
+    found = checks(report)
+    assert found["livekit"]["status"] == "pass"
+    assert found["reasoning"]["status"] == "pass"
+    assert "not authenticated" in found["livekit"]["message"]
+    assert env == original
+    assert set(root.rglob("*")) == before
+    assert "devkey" not in json.dumps(report)
+
+
+def test_saved_transport_mode_overrides_first_run_environment(configured):
+    root, env = configured
+    env["VOICEBOX_LIVEKIT_MODE"] = "local"
+    for name in ("LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET"):
+        env[name] = ""
+    saved_settings(root, env, livekitMode="configured")
+    assert checks(doctor.run_checks(root, env))["livekit"]["status"] == "missing"

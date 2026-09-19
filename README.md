@@ -1,6 +1,11 @@
-# Voicebox Studio
+# LiveKit Voice Studio
 
-Talk with **GitHub Copilot or OpenAI Codex** using a voice you've recorded or have permission to use.
+The standalone setup runs Qwen directly with this project's private voice library.
+It does not require the separate Voicebox application or HTTP server. The older
+Voicebox adapter remains optional; existing `VOICEBOX_*` configuration names and
+Python package imports remain compatible.
+
+Talk with **a local model or your chosen cloud AI** using a voice you've recorded or have permission to use.
 
 Record a short reference, hear it say something new, then start a conversation.
 Speech recognition and generation run on your Mac; you choose the service that
@@ -11,9 +16,10 @@ answers. The Voicebox desktop app can stay closed.
 ## Development preview
 
 The source is available under MIT, with separate licenses for dependencies and
-models. This is an early single-user app for Apple Silicon, not a fully offline
-assistant or a supported production service. LiveKit and the selected reasoning
-provider require your own accounts.
+models. This is an early single-user app for Apple Silicon, not a supported
+production service. You can run the components locally or select remote services.
+Remote providers require your own accounts; disconnected operation needs all
+models installed and has separate verification requirements.
 
 Synthetic spoken tests cover replies, deliberate interruption, pauses and recovery.
 One earlier intermittent provider failure remains unexplained; response speed varies.
@@ -51,8 +57,8 @@ You'll also need:
 
 - Qwen TTS 0.6B weights and the Nemotron CPU recognizer, installed explicitly.
 - A voice you own or have permission to use.
-- A LiveKit project and a supported reasoning account: Copilot, Codex,
-  Azure OpenAI or OpenAI.
+- Local LiveKit and Ollama, or your own configured LiveKit server and reasoning
+  provider. See [local/cloud choices](docs/local-cloud-components.md).
 
 **New installation? Follow the [first-run guide](docs/quickstart.md).**
 It covers dependencies, model downloads, disk space and private configuration.
@@ -85,13 +91,16 @@ between sessions. The microphone stays off until you enable it.
 | Stage | Default route |
 | --- | --- |
 | Listen | Nemotron turns speech into text on your Mac |
-| Answer | Copilot receives conversation text and uses a remote model |
+| Answer | Ollama generates text on your Mac |
 | Speak | Qwen generates audio locally from your selected voice |
-| Connect | LiveKit carries conversation audio and coordinates the room |
+| Connect | Local LiveKit carries audio/text and coordinates the room |
 
-**Local-first is not fully offline.** Reference recordings stay on your machine;
-live conversation audio travels through LiveKit and text goes to the reasoning
-provider. Choosing cloud transcription also sends speech to that provider.
+These defaults apply to new libraries; existing settings are preserved. In Settings,
+choose local or configured LiveKit independently of the reasoning provider.
+Reference recordings stay on your machine. A remote LiveKit server carries live
+audio/text; remote reasoning receives text. Cloud transcription receives speech.
+An endpoint running on your computer can itself be a proxy, so locality labels
+describe the configured route rather than certify offline operation.
 Session recording is disabled, and the page keeps transcripts in memory rather
 than browser storage. Provider-side retention depends on your account and terms.
 
@@ -143,3 +152,18 @@ and [third-party notices](web/THIRD_PARTY_LICENSES).
 [MIT license](LICENSE) · [Contributing](CONTRIBUTING.md) · [Security reporting](SECURITY.md)
 
 For source-release contents and license boundaries, see [release preparation](docs/releasing.md).
+
+## Learn by using the app
+
+**First conversation guide** shows local setup checks and the next steps.
+**Check microphone** offers an eight-second browser-only recording and replay.
+**How it works** reveals the connection, pipeline, and actual measured timings.
+**Practice troubleshooting** guides three break-and-fix exercises, with recovery
+steps and interview prompts. Start with the [learning guide](docs/learn-livekit.md#an-interview-walkthrough).
+Start with [hands-on exercises](docs/learn-livekit.md), then use the separate
+[cloud learning example](docs/cloud-learning.md) to explore named agent dispatch.
+The cloud example uses stock voices and does not upload your private reference.
+
+Experimental delivery comparisons are kept separate from conversation defaults.
+See [expressive voice experiments](docs/expressive-experiment.md) for the evidence
+needed before calling a local cloned voice expressive.

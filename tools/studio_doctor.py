@@ -16,6 +16,13 @@ from pathlib import Path
 from typing import Any, Literal, TypedDict
 from urllib.parse import urlsplit
 
+from examples.component_endpoints import (
+    DEFAULT_LLM_URL,
+    ENDPOINT_PROVIDERS,
+    apply_livekit,
+    validate_endpoint,
+)
+
 Status = Literal["pass", "missing", "unverified"]
 
 
@@ -136,6 +143,8 @@ def _saved_environment(root: Path, env: dict[str, str]) -> bool:
         raise ValueError
     settings = _json(settings_path, 4096)
     settings.setdefault("codexRestrictedApproved", False)
+    settings.setdefault("livekitMode", "configured")
+    settings.setdefault("llmBaseUrl", DEFAULT_LLM_URL)
     provider = settings.get("llmProvider")
     if (
         set(settings)
@@ -146,19 +155,28 @@ def _saved_environment(root: Path, env: dict[str, str]) -> bool:
             "reasoningEffort",
             "voiceId",
             "codexRestrictedApproved",
+            "livekitMode",
+            "llmBaseUrl",
         }
         or settings["sttProvider"] not in ("nemotron", "azure", "openai")
         or not isinstance(provider, str)
-        or provider not in PRESETS
-        or (settings["llmModel"], settings["reasoningEffort"]) != PRESETS[provider]
+        or provider not in (*PRESETS, *ENDPOINT_PROVIDERS)
+        or (
+            provider in PRESETS
+            and (settings["llmModel"], settings["reasoningEffort"]) != PRESETS[provider]
+        )
+        or (provider in ENDPOINT_PROVIDERS and settings["reasoningEffort"] != "none")
         or type(settings["codexRestrictedApproved"]) is not bool
         or (provider == "codex" and not settings["codexRestrictedApproved"])
     ):
         raise ValueError
+    validate_endpoint(provider, settings["llmBaseUrl"], settings["llmModel"])
+    apply_livekit(settings["livekitMode"], env, dict(env))
     voice = (
         _voice_path(library_path, settings["voiceId"]) if settings["voiceId"] is not None else None
     )
     env.update(
+        VOICEBOX_LLM_BASE_URL=settings["llmBaseUrl"],
         VOICEBOX_STT_PROVIDER=settings["sttProvider"],
         VOICEBOX_LLM_PROVIDER=settings["llmProvider"],
         VOICEBOX_LLM_MODEL=settings["llmModel"],
@@ -286,6 +304,8 @@ def run_checks(root: Path, environ: Mapping[str, str] | None = None) -> Report:
     try:
         if configuration_valid:
             saved = _saved_environment(root, env)
+            if not saved:
+                apply_livekit(env.get("VOICEBOX_LIVEKIT_MODE", "configured"), env, dict(env))
             add(
                 "settings",
                 "pass",
@@ -482,6 +502,21 @@ def run_checks(root: Path, environ: Mapping[str, str] | None = None) -> Report:
                 "Install the selected CLI and agents extra; configure explicit model/effort. "
                 "Codex additionally requires macOS and restricted-agent consent; "
                 "see docs/agent-providers.md."
+            )
+        elif reasoning in ENDPOINT_PROVIDERS:
+            try:
+                validate_endpoint(
+                    reasoning,
+                    env.get("VOICEBOX_LLM_BASE_URL", DEFAULT_LLM_URL),
+                    env.get("VOICEBOX_LLM_MODEL", "qwen3:1.7b"),
+                    env.get("VOICEBOX_REASONING_EFFORT", "none"),
+                )
+                reasoning_ok = True
+            except ValueError:
+                reasoning_ok = False
+            reasoning_action = (
+                "Configure the explicit endpoint and model in Studio Settings. Start the service "
+                "and prepare the model yourself; availability is checked when connecting."
             )
         elif reasoning == "openai":
             reasoning_ok = populated("OPENAI_API_KEY")

@@ -46,9 +46,16 @@ standalone backend to mlx and use actual absolute model/runtime paths. Set
 VOICEBOX_EXCLUSIVE=1 only after confirming competing inference is stopped.
 Do not overwrite an existing .env or source it as a shell script.
 
-Use the user's chosen Copilot or Codex account and configured LiveKit project.
-Guide the user through official CLI sign-in and private credential entry; never
-ask them to paste secrets into chat. Do not create paid resources automatically.
+New libraries default to local LiveKit and Ollama. Follow
+docs/local-cloud-components.md to prepare these services and explicitly install
+the chosen model. Preserve existing provider choices and saved settings. Local
+voice auditions need neither LiveKit nor a reasoning account.
+
+If the user chooses remote transport or reasoning, configure their own LiveKit
+server and chosen provider independently. Guide them through any required official
+sign-in and private credential entry; never ask them to paste secrets into chat.
+Do not create paid resources automatically. A local endpoint can proxy to remote
+services, so its address alone is not proof of fully offline operation.
 Read docs/agent-providers.md: available model/effort combinations depend on the
 account. Codex's restricted-agent approval must be explicit; do not set its
 consent flag on the user's behalf. Never silently switch providers.

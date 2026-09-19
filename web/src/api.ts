@@ -13,15 +13,25 @@ export interface StudioStatus {
     source?: 'voicebox' | 'local-bundle';
   };
   stt?: { provider: 'nemotron' | 'azure' | 'openai'; model: string; local: boolean };
-  ai: { provider: 'azure' | 'openai' | 'copilot' | 'codex'; model: string; effort?: string; local?: false };
-  livekit: { configured: boolean };
+  ai: { provider: 'azure' | 'openai' | 'copilot' | 'codex' | 'ollama' | 'openai-compatible'; model: string; effort?: string; local?: boolean };
+  livekit: { configured: boolean; local?: boolean; mode?: 'local' | 'configured' };
   session: { id: string; roomName: string } | null;
   metrics: {
     ttsFirstFrameSeconds: number | null;
     ttsAudioSeconds: number | null;
     llmFirstTokenSeconds: number | null;
+    endOfUtteranceSeconds?: number | null;
+    transcriptionDelaySeconds?: number | null;
   };
   message: string | null;
+  turns?: Array<{
+    id: string;
+    llmFirstTokenSeconds?: number;
+    ttsFirstFrameSeconds?: number;
+    ttsAudioSeconds?: number;
+    endOfUtteranceSeconds?: number;
+    transcriptionDelaySeconds?: number;
+  }>;
 }
 
 export interface SessionGrant {
@@ -53,6 +63,8 @@ export async function api<T>(path: string, body?: object, keepalive = false): Pr
 
 export interface ProviderOption { id: string; label: string; available: boolean; reason?: string }
 export interface StudioConfig {
+  livekitMode?: 'local' | 'configured';
+  llmBaseUrl?: string;
   sttProvider: string;
   llmProvider: string;
   llmModel: string;
@@ -101,6 +113,7 @@ export async function studioRequest<T>(path: string, options: {
 } = {}): Promise<T> {
   const { method = 'GET', body, keepalive = false } = options;
   const multipart = body instanceof FormData;
+  const startingSession = path === 'session' && method === 'POST';
   let response: Response;
   try {
     response = await fetch(`/api/${path}`, {
@@ -109,9 +122,12 @@ export async function studioRequest<T>(path: string, options: {
       headers: method !== 'GET' ? { 'X-Voicebox-Studio': '1', ...(!multipart ? { 'Content-Type': 'application/json' } : {}) } : undefined,
       body: multipart ? body : body ? JSON.stringify(body) : undefined,
       keepalive,
-      signal: keepalive ? undefined : AbortSignal.timeout(15_000),
+      signal: keepalive ? undefined : AbortSignal.timeout(startingSession ? 60_000 : 15_000),
     });
-  } catch {
+  } catch (cause) {
+    if (startingSession && cause instanceof Error && cause.name === 'TimeoutError') {
+      throw new ApiError(0, 'Local services are taking longer than expected to start. Wait for session cleanup to finish, then retry.');
+    }
     throw new ApiError(0, 'The local Studio server is not responding. Check that it is running, then retry.');
   }
   let data: unknown;

@@ -17,6 +17,11 @@ from livekit.plugins import voicebox
 from examples.fast_qwen import FastQwenTTS
 from examples.minimal_agent import configured_ai, configured_provider, provider_choices
 from examples.startup_progress import STARTUP_MESSAGES
+from examples.turn_handling import (
+    InvalidTurnDetection,
+    LocalTurnDetectionUnavailable,
+    configured_turn_handling,
+)
 
 
 def report(event: str, **values: Any) -> None:
@@ -35,6 +40,34 @@ def report_startup(stage: str) -> str:
         raise ValueError("Unknown startup stage.")
     report("startup", stage=stage)
     return stage
+
+
+def local_speech_error(error: Any) -> str:
+    """Only known adapter messages may cross the private-worker boundary."""
+    messages = {
+        "Nemotron connection timed out": (
+            "Local speech connection timed out. End the session and retry."
+        ),
+        "Nemotron finalization timed out": (
+            "Local speech finalization timed out. End the session and retry."
+        ),
+        "Nemotron input buffer overloaded": (
+            "Local speech input buffer filled up. End the session and reduce system load."
+        ),
+        "Nemotron event buffer overloaded": (
+            "Local speech event buffer filled up. End the session and retry."
+        ),
+        "Nemotron sidecar rejected the stream": (
+            "Local speech service rejected the audio stream. End the session and retry."
+        ),
+        "Nemotron sidecar disconnected": (
+            "Local speech connection closed unexpectedly. End the session and retry."
+        ),
+    }
+    reason = getattr(error, "message", None)
+    if isinstance(reason, str) and reason in messages:
+        return messages[reason]
+    return "Speech recognition reported an error. Try ending the session."
 
 
 async def run() -> None:
@@ -122,16 +155,15 @@ async def run() -> None:
         if stop.is_set():
             return
         stage = report_startup("conversation session setup")
+        turn_handling = await asyncio.to_thread(configured_turn_handling)
+        if stop.is_set():
+            return
         session = AgentSession(
             vad=vad,
             stt=speech,
             llm=language_model,
             tts=provider,
-            turn_handling={
-                "turn_detection": "vad",
-                "interruption": {"mode": "vad"},
-                "preemptive_generation": {"enabled": False},
-            },
+            turn_handling=turn_handling,
         )
 
         @session.on("metrics_collected")
@@ -140,17 +172,23 @@ async def run() -> None:
             if isinstance(value, TTSMetrics):
                 report(
                     "metrics",
+                    speechId=value.speech_id,
                     ttsFirstFrameSeconds=value.ttfb if value.ttfb >= 0 else None,
                     ttsAudioSeconds=value.audio_duration,
                 )
             elif isinstance(value, EOUMetrics):
                 report(
                     "metrics",
+                    speechId=value.speech_id,
                     endOfUtteranceSeconds=value.end_of_utterance_delay,
                     transcriptionDelaySeconds=value.transcription_delay,
                 )
             elif isinstance(value, LLMMetrics):
-                report("metrics", llmFirstTokenSeconds=value.ttft if value.ttft >= 0 else None)
+                report(
+                    "metrics",
+                    speechId=value.speech_id,
+                    llmFirstTokenSeconds=value.ttft if value.ttft >= 0 else None,
+                )
 
         @session.on("error")
         def session_error(event: Any) -> None:
@@ -158,6 +196,9 @@ async def run() -> None:
                 # AgentLLM's public errors are already sanitized static diagnostics.
                 reason = getattr(event.error, "error", None)
                 report("error", message=f"Agent response failed: {str(reason)[:180]}")
+                return
+            if provider_choices()[0] == "nemotron" and event.source is speech:
+                report("error", message=local_speech_error(getattr(event.error, "error", None)))
                 return
             component = (
                 "Speech recognition"
@@ -238,7 +279,12 @@ async def run() -> None:
         await stop.wait()
     except (Exception, asyncio.CancelledError) as error:
         # Process boundary: emit a static diagnostic, not provider bodies or secrets.
-        report("error", message=f"Failed during {stage} ({type(error).__name__}).")
+        message = (
+            str(error)
+            if isinstance(error, (InvalidTurnDetection, LocalTurnDetectionUnavailable))
+            else f"Failed during {stage} ({type(error).__name__})."
+        )
+        report("error", message=message)
         if isinstance(error, asyncio.CancelledError):
             raise
     finally:

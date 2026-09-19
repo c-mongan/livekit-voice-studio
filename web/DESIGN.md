@@ -20,7 +20,7 @@ transcript does not reset the agent conversation. Reloading clears the view.
 
 ## Visual system
 
-Bright white main surface, restrained cobalt action color
+Light mode uses a bright white main surface and restrained cobalt action color
 `oklch(.55 .149 250)`, and subtly blue-tinted neutral inspector. Tokens live in
 `src/tokens.css`. Ink and muted text are deliberately dark enough for small
 diagnostic labels. Semantic green/amber/red appear only for genuine state.
@@ -135,3 +135,85 @@ public APIs. Production build validates the bundle.
 Parent integration owns browser checks at desktop/390px, the live local API,
 microphone/autoplay permissions and a real room session. Do not substitute a
 mocked transcript or animation as evidence of a working live pipeline.
+
+## Local and cloud clarity
+
+The conversation surface shows a four-part route summary before starting, with
+explicit unknown states when the server is unavailable. "Local setup" describes
+configuration; idle UI says services are checked at start, rather than claiming
+they are already running. The privacy acknowledgement retains a disclosure of
+where audio and text go without repeating all four locations by default.
+Connection & AI settings keep Ollama's endpoint under Advanced connection;
+custom endpoints expose it immediately. Cloud AI choices explain text routing.
+Startup uses the server's reported stage and keeps existing transcript content.
+
+StatusBadge and ConversationPanelState were adapted from StatusBadge and
+ExtractionPanelState in mongo-ai/Intelligent-Document-Processor with the owner's
+explicit permission in this task. Adaptations use existing Studio tokens and
+React, without importing that project's motion, icon, or routing dependencies.
+No document-processing code, credentials, or private data was imported.
+
+## Document Processor component review and adaptation
+
+Reviewed the owner's private Intelligent-Document-Processor source via authenticated
+GitHub reads rather than cloning or installing the full application. The scoped
+review covered Sidebar, CommandPalette, ChatPanel, ReviewHeader, PremiumLoader,
+StatusBadge and ExtractionPanelState, plus the stylesheet and package manifest.
+
+- CommandPalette: adapted its searchable action model and arrow/Enter navigation
+  into StudioCommands. Native dialog adds modal focus handling and Escape; locked
+  actions cannot bypass Studio session ownership. No routing dependency added.
+- Sidebar: adapted the composition pattern into a restrained desktop control
+  column alongside a larger sticky conversation workspace. Mobile stacks normally.
+- ChatPanel: adapted role-separated message surfaces and alignment. Existing
+  LiveKit audio, IME handling, draft preservation and scroll-follow rules remain
+  authoritative. Its browser SpeechRecognition code was not imported.
+- ReviewHeader: its document validation/progress controls do not map to Studio.
+- PremiumLoader: rotating fictional loading stages were not reused. Studio reports
+  actual worker stages and does not invent percentages or work being performed.
+
+Owner permission covers reuse; private product data and application configuration
+were not imported. No new dependencies. This is a scoped UI review, not a security
+or correctness audit of the source application.
+
+Validation: 206 frontend tests passed, including keyboard selection, locked
+commands, focus restoration and modal exclusion. TypeScript/Vite build passed
+with the existing bundle-size warning. Browser checks exercised search-to-settings,
+no-results, Escape, desktop composition and 390 px mobile width without horizontal
+overflow; no page errors were observed. Conversation inference was not rerun for
+these presentation-only changes.
+
+
+## Cohesive navigation and appearance
+
+The global navigation contains Conversation, Voice library and Settings. Opening
+Voices or Settings preserves the conversation in a native modal; provider and
+voice mutations remain locked during active sessions. The settings tablist now
+contains Voices, Connection & AI, Audio and Appearance, with wrapping arrow-key
+navigation, Home/End and a single active tab stop. Audio links to existing speech
+configuration, voice selection and the explicit microphone test; it never begins
+capture automatically.
+
+Appearance adapts the owner's UserPreferences theme choices to real global CSS
+tokens: Light, Dark (navy/cyan) and System. System is the new-browser default and
+tracks OS changes. Only theme and compact-density preferences use localStorage;
+transcripts and credentials are not included. Invalid stored values fall back to
+System. Blocked storage still allows an immediate change and reports that it was
+not saved. Themes are initialized before React renders; storage events synchronize
+other loaded tabs. Compact mode reduces spacing without shrinking touch targets.
+Reduced motion continues to follow the OS setting.
+
+Verification: 210 frontend tests passed; production typecheck/build passed with
+the existing bundle-size warning. Browser checks verified Light/Dark appearance,
+persistence after reload, compact density, mobile tabs at 390 px, the Audio-to-mic
+check flow (microphone remained off), and navigation. System-change handling and
+storage failures were checked with focused tests. Voice inference was unchanged.
+
+## Guided troubleshooting and first-run recovery
+
+Setup validates the complete bounded report shape before rendering. Missing items
+appear first, unverified checks stay explicit, and found items are collapsed.
+The optional pipeline inspector includes three real-control exercises with expected
+observations, restoration steps and interview prompts. Self-reported progress is
+in-memory and explicitly distinguished from test evidence. No fault is injected,
+provider switched or service stopped by opening or checking the guide.

@@ -7,8 +7,7 @@ that is a planning margin, not a runtime memory requirement.
 
 ## 1. Install the application
 
-Clone the source, then install its locked dependencies. Until the repository is
-public, cloning requires access to the private GitHub repository:
+Clone the public source, then install its locked dependencies:
 
 ```sh
 git clone https://github.com/c-mongan/livekit-voice-studio.git
@@ -63,8 +62,9 @@ For a new checkout:
 test -e .env || (umask 077; cp .env.example .env)
 ```
 
-The example preserves the older external Voicebox backend by default. For this
-standalone guide, edit these fields in `.env` (replace paths with the real paths
+The example selects standalone MLX. Existing `.env` files are never replaced;
+older HTTP installations can keep `VOICEBOX_TTS_BACKEND=voicebox`.
+Edit these fields in `.env` (replace paths with the real paths
 returned by the preceding setup steps):
 
 | Field | Value for this guide |
@@ -74,24 +74,31 @@ returned by the preceding setup steps):
 | `VOICEBOX_STT_PROVIDER` | `nemotron` |
 | `NEMOTRON_SERVER_BINARY` | Absolute path ending in `build/bin/nemo-speech` |
 | `NEMOTRON_MODEL_PATH` | Absolute path to the verified `.gguf` model |
-| `VOICEBOX_LLM_PROVIDER` | `copilot` |
+| `VOICEBOX_LLM_PROVIDER` | `ollama` |
+| `VOICEBOX_LLM_MODEL` | `qwen3:1.7b` |
+| `VOICEBOX_LLM_BASE_URL` | `http://127.0.0.1:11434/v1` |
+| `VOICEBOX_LIVEKIT_MODE` | `local` |
 | `VOICEBOX_EXCLUSIVE` | `1`, after stopping competing generation jobs |
 
 Leave `VOICEBOX_VOICE_BUNDLE` empty until you record and select a voice in the
 app. Selecting it saves the choice in the private local library. No external
 Voicebox server is required for this path. Do not run `.env` as a shell script.
 
-For conversations, add a LiveKit project's URL, API key and secret. Install and
-sign in to Copilot CLI, then verify your account offers Luna with low reasoning.
-The [agent-provider guide](agent-providers.md) covers supported versions and
-restrictions. Azure or OpenAI can be configured instead; there is no automatic
-fallback. Codex requires separate restricted-agent consent.
-The preset was tested with the installed account/runtime combination, not every
-subscription. If your account lacks it, choose a supported configured Azure or
-OpenAI option rather than assuming the preset is universally available.
+For local conversations, prepare Ollama and LiveKit using the
+[local/cloud component guide](local-cloud-components.md). New libraries default
+to local LiveKit and Ollama; existing libraries retain their provider and configured
+LiveKit server. Settings lets you switch either component independently.
 
-Voice recording and local generated auditions do not need cloud credentials.
-Conversations do: local speech does not make remote reasoning or LiveKit offline.
+For remote reasoning, configure an existing Copilot, Azure or OpenAI provider.
+The [agent-provider guide](agent-providers.md) covers account/runtime requirements.
+Codex requires separate restricted-agent consent. For LiveKit Cloud or your own
+remote server, keep its URL/key/secret in `.env` and choose **Configured server**.
+There is no automatic fallback between local and remote services.
+
+Voice recording and local generated auditions do not need LiveKit or an LLM.
+An all-local conversation also needs the local LiveKit and Ollama services running
+and all selected models installed. Choosing remote reasoning or transport sends
+that part of the conversation to the selected service.
 
 Check the local setup without starting services or contacting providers:
 
@@ -130,3 +137,49 @@ uv run --no-sync python -m examples.studio --check
 First connection prepares the model and reference before the agent is ready.
 Subsequent turns reuse that process. End the session before changing voices or
 auditioning another one. Voicebox can stay closed throughout this workflow.
+
+## Browser setup and learning tools
+
+Standalone mode uses this project's own Studio server, voice library and Qwen
+adapter. The separate Voicebox app and its HTTP service can stay closed. Older
+`VOICEBOX_*` variable names are retained for compatibility; they do not imply an
+external service is required when `VOICEBOX_TTS_BACKEND=mlx` and a local voice is selected.
+
+Keep source and virtual environments in a normal local development folder rather
+than an offloaded cloud-sync folder. If setup checks report slow or unavailable
+files, make them locally available and retry. The server returns this diagnostic
+after three seconds while sharing any still-running check across requests.
+
+If another Studio fork has incompatible saved settings, select a separate private
+`VOICEBOX_LIBRARY_DIR` in `.env`; do not delete the other installation's library.
+An explicitly configured authorized `VOICEBOX_VOICE_BUNDLE` can seed the new library
+locally. The original recording and settings remain unchanged.
+
+Open **First conversation guide** for read-only setup checks. A green Found result
+confirms local configuration, not account access or model synthesis. Missing
+LiveKit credentials do not block a local voice sample. **Check microphone** records
+up to eight seconds for local replay; nothing is uploaded or saved.
+
+The default view focuses on conversation. **How it works** reveals the pipeline,
+room state and measured generation delays. Try the [learning exercises](learn-livekit.md).
+
+To compare turn-taking, set `VOICEBOX_TURN_DETECTION=audio-local` in your private
+`.env` and restart Studio after ending your session. This selects LiveKit’s bundled
+CPU audio turn detector. Keep `vad` to retain the existing behavior. Judge pauses
+and interruptions on your microphone; a configured detector is not quality proof.
+
+## If the first attempt fails
+
+Use the smallest check that isolates the problem:
+
+| Last working step | Next check |
+| --- | --- |
+| Page will not open | `./studio status`; start the installed checkout if stopped. An unmanaged listener is another process, not permission to kill it. |
+| Page opens, setup has missing items | Follow **First conversation guide** actions; Found checks are collapsed. Empty or malformed responses are errors, never a pass. |
+| Voice records but audition fails | Local Qwen installation, reference transcript and available resources. LiveKit and an LLM are not needed for audition. |
+| Audition works but conversation fails | Selected LiveKit server and reasoning endpoint, then worker readiness. Do not repeatedly start sessions while one is draining. |
+| Typed reply works but speech does not | Microphone permission, track publication and recognizer; use **Check microphone** for browser-only replay. |
+| Reply text arrives but no sound | Playback permission, selected output device and agent audio track; inspect the pipeline before blaming synthesis. |
+
+After a repair, repeat the failed step and one follow-up. A green configuration
+check does not establish a working conversation. See [break-and-fix practice](learn-livekit.md#a-repeatable-break-and-fix-practice).

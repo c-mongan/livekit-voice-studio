@@ -79,8 +79,9 @@ async def test_settings_are_nonsecret_and_idle_only(library_client, monkeypatch)
     response = await client.get("/api/settings", headers=HEADERS)
     data = await response.json()
     assert response.status == 200
-    assert data["llmProvider"] == "copilot"
+    assert data["llmProvider"] == "ollama"
     assert "providers" in data
+    assert {"ollama", "openai-compatible"} <= {item["id"] for item in data["providers"]["llm"]}
     assert "private-credential-must-not-leak" not in json.dumps(data)
     assert "apiKey" not in data
     studio.metrics["llmFirstTokenSeconds"] = 1.5
@@ -101,3 +102,13 @@ async def test_switching_away_from_local_stt_releases_owned_runtime(library_clie
     response = await client.post("/api/settings", json={"sttProvider": "azure"}, headers=HEADERS)
     assert response.status == 200
     service.close.assert_awaited_once()
+
+
+async def test_browser_policy_allows_only_exact_insecure_local_livekit(library_client):
+    client, _ = library_client
+    response = await client.get("/api/settings", headers=HEADERS)
+    policy = response.headers["Content-Security-Policy"]
+    sources = next(part for part in policy.split(";") if "connect-src" in part).split()[1:]
+    assert "ws://127.0.0.1:7880" in sources
+    assert "http://127.0.0.1:7880" in sources
+    assert "ws:" not in sources and "http:" not in sources and "*" not in sources
