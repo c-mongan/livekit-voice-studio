@@ -69,3 +69,13 @@ input, local reasoning and speech generation completed while the spoken-input
 path failed in the earlier run; it does not identify the recognition stall's
 root cause. The screenshots in the demo guide contain only this synthetic exchange
 or an empty transcript. The reply screenshot was captured after session cleanup.
+
+## Follow-up CI limitation
+
+PR #5's initial hosted frontend jobs stopped at `npm audit`, before frontend
+checks ran. A local reproduction showed HTTP 503 from npm's bulk advisory
+endpoint, followed by HTTP 400 from its deprecated quick-audit fallback. The
+earlier clean installation reported zero known vulnerabilities; this later audit
+did not complete and cannot establish current advisory status. The security gate
+remains enabled. Re-run failed CI jobs after the advisory service recovers before
+merging. No lockfile was regenerated to work around a service failure.
