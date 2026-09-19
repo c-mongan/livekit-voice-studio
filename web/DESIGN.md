@@ -152,3 +152,33 @@ ExtractionPanelState in mongo-ai/Intelligent-Document-Processor with the owner's
 explicit permission in this task. Adaptations use existing Studio tokens and
 React, without importing that project's motion, icon, or routing dependencies.
 No document-processing code, credentials, or private data was imported.
+
+## Document Processor component review and adaptation
+
+Reviewed the owner's private Intelligent-Document-Processor source via authenticated
+GitHub reads rather than cloning or installing the full application. The scoped
+review covered Sidebar, CommandPalette, ChatPanel, ReviewHeader, PremiumLoader,
+StatusBadge and ExtractionPanelState, plus the stylesheet and package manifest.
+
+- CommandPalette: adapted its searchable action model and arrow/Enter navigation
+  into StudioCommands. Native dialog adds modal focus handling and Escape; locked
+  actions cannot bypass Studio session ownership. No routing dependency added.
+- Sidebar: adapted the composition pattern into a restrained desktop control
+  column alongside a larger sticky conversation workspace. Mobile stacks normally.
+- ChatPanel: adapted role-separated message surfaces and alignment. Existing
+  LiveKit audio, IME handling, draft preservation and scroll-follow rules remain
+  authoritative. Its browser SpeechRecognition code was not imported.
+- ReviewHeader: its document validation/progress controls do not map to Studio.
+- PremiumLoader: rotating fictional loading stages were not reused. Studio reports
+  actual worker stages and does not invent percentages or work being performed.
+
+Owner permission covers reuse; private product data and application configuration
+were not imported. No new dependencies. This is a scoped UI review, not a security
+or correctness audit of the source application.
+
+Validation: 206 frontend tests passed, including keyboard selection, locked
+commands, focus restoration and modal exclusion. TypeScript/Vite build passed
+with the existing bundle-size warning. Browser checks exercised search-to-settings,
+no-results, Escape, desktop composition and 390 px mobile width without horizontal
+overflow; no page errors were observed. Conversation inference was not rerun for
+these presentation-only changes.

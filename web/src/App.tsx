@@ -8,6 +8,7 @@ import { useStudioAgent } from './useStudioAgent';
 import { StudioSettings } from './StudioSettings';
 import { SetupGuide } from './SetupGuide';
 import { ConversationPanelState } from './components/conversation-panel-state';
+import { StudioCommands } from './components/studio-commands';
 import { ConversationRoute } from './ConversationRoute';
 import { MicrophoneCheck } from './MicrophoneCheck';
 
@@ -282,15 +283,9 @@ function Workspace({ studio, setMuted }: { studio: Studio; setMuted: (muted: boo
     </header>
     <main className={`studio-layout${learning ? '' : ' studio-simple'}`}>
       <section className="workspace" id="conversation" aria-labelledby="workspace-title">
+        <div className="studio-controls">
         <div className="workspace-heading"><div><h1 id="workspace-title">Your voice. Your conversation.</h1><p>A place to think out loud — or start with a message.</p></div></div>
-        <div className="experience-controls">
-          <button className="button quiet" aria-pressed={learning} onClick={() => setLearning(!learning)}>{learning ? 'Back to Studio' : 'How it works'}</button>
-          <button className="button quiet" aria-expanded={micCheck} disabled={!!grant || starting || auditionBusy} onClick={() => setMicCheck(!micCheck)}>{micCheck ? 'Close microphone check' : 'Check microphone'}</button>
-        </div>
-        {micCheck && !grant && !starting && !auditionBusy && <MicrophoneCheck disabled={ending} />}
-        <StudioSettings onOpen={() => setMicCheck(false)} requestedTab={settingsRequest} onRequestHandled={() => setSettingsRequest(null)} status={status} locked={!online || !!grant || starting || ending || (!auditionBusy && status?.phase !== 'idle')} onChanged={studio.refresh} onRoutingChanged={() => setConsent(false)} onAuditionBusy={setAuditionBusy} />
         <ConversationRoute status={status} online={online} locked={!canStart} onSettings={() => setSettingsRequest('providers')} />
-        {!grant && <SetupGuide disabled={!online || starting || ending || auditionBusy || status?.phase !== 'idle'} onVoices={() => { setMicCheck(false); setSettingsRequest('voices'); }} onSettings={() => { setMicCheck(false); setSettingsRequest('providers'); }} />}
         <div className={`session-strip state-${state}`}>
           <div className="session-status"><span className="state-dot" /><strong role="status">{auditionBusy ? 'Audition in progress' : stateCopy[state]}</strong></div>
           <span className="session-mode">{auditionBusy ? 'Local generation' : grant ? 'Browser ↔ local agent' : 'Voice + text'}</span>
@@ -323,6 +318,20 @@ function Workspace({ studio, setMuted }: { studio: Studio; setMuted: (muted: boo
           {studio.error && <div className="notice error" role="alert"><p>{studio.error}</p><button className="button quiet" onClick={() => studio.setError(null)} aria-label="Dismiss error"><Icon name="close" /></button></div>}
           {studio.heartbeatError && <div className="notice warning"><p>{studio.heartbeatError}</p></div>}
         </div>
+        <StudioCommands commands={[
+          { id: 'chat', label: 'Write a message', description: 'Focus the conversation composer', action: () => composer.current?.focus() },
+          { id: 'voices', label: 'Choose a voice', description: 'Manage your private voice library', disabled: !canStart, action: () => setSettingsRequest('voices') },
+          { id: 'settings', label: 'Connection and AI settings', description: 'Choose local or cloud components', disabled: !canStart, action: () => setSettingsRequest('providers') },
+          { id: 'learn', label: 'Inspect the pipeline', description: 'See LiveKit stages and measured timings', action: () => setLearning(true) },
+        ]} />
+        <div className="experience-controls">
+          <button className="button quiet" aria-pressed={learning} onClick={() => setLearning(!learning)}>{learning ? 'Back to Studio' : 'How it works'}</button>
+          <button className="button quiet" aria-expanded={micCheck} disabled={!!grant || starting || auditionBusy} onClick={() => setMicCheck(!micCheck)}>{micCheck ? 'Close microphone check' : 'Check microphone'}</button>
+        </div>
+        {micCheck && !grant && !starting && !auditionBusy && <MicrophoneCheck disabled={ending} />}
+        <StudioSettings onOpen={() => setMicCheck(false)} requestedTab={settingsRequest} onRequestHandled={() => setSettingsRequest(null)} status={status} locked={!online || !!grant || starting || ending || (!auditionBusy && status?.phase !== 'idle')} onChanged={studio.refresh} onRoutingChanged={() => setConsent(false)} onAuditionBusy={setAuditionBusy} />
+        {!grant && <SetupGuide disabled={!online || starting || ending || auditionBusy || status?.phase !== 'idle'} onVoices={() => { setMicCheck(false); setSettingsRequest('voices'); }} onSettings={() => { setMicCheck(false); setSettingsRequest('providers'); }} />}
+        </div>
         <section className="conversation" aria-label="Conversation transcript">
           <div className="transcript-heading"><h2>Conversation</h2><button className="button quiet clear-button" disabled={!messages.length} onClick={clearTranscript}>Clear transcript</button></div>
           <div className="transcript" ref={scrollRef} role="log" aria-label="Conversation messages" aria-live="polite" aria-relevant="additions text" tabIndex={0} onScroll={(event) => {
@@ -339,7 +348,7 @@ function Workspace({ studio, setMuted }: { studio: Studio; setMuted: (muted: boo
             <textarea id="message" ref={composer} value={draft} maxLength={MAX_MESSAGE_LENGTH} placeholder="Message your agent…" rows={2} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => {
               if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); }
             }} aria-describedby="composer-hint" />
-            <div className="composer-footer"><span id="composer-hint">{pendingText ? 'Queued for the agent' : !grant && !consent ? 'Acknowledge privacy above to start' : 'Enter to send · Shift + Enter for a new line'}</span><span className="character-count" aria-label={`${draft.length} of ${MAX_MESSAGE_LENGTH} characters`}>{draft.length}/{MAX_MESSAGE_LENGTH}</span><button className="button primary send-button" disabled={!canSend} type="submit" aria-label={grant ? 'Send message' : 'Start session and send message'}><span>{sending ? 'Sending…' : pendingText ? 'Queued' : grant ? 'Send' : 'Start & send'}</span><Icon name="send" /></button></div>
+            <div className="composer-footer"><span id="composer-hint">{pendingText ? 'Queued for the agent' : !grant && !consent ? 'Review privacy to start' : 'Enter to send · Shift + Enter for a new line'}</span><span className="character-count" aria-label={`${draft.length} of ${MAX_MESSAGE_LENGTH} characters`}>{draft.length}/{MAX_MESSAGE_LENGTH}</span><button className="button primary send-button" disabled={!canSend} type="submit" aria-label={grant ? 'Send message' : 'Start session and send message'}><span>{sending ? 'Sending…' : pendingText ? 'Queued' : grant ? 'Send' : 'Start & send'}</span><Icon name="send" /></button></div>
           </form>
           <p className="transcript-note">Only in this tab · Clearing this view does not reset the agent’s memory.</p>
         </section>
