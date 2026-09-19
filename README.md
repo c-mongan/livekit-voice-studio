@@ -11,7 +11,9 @@ Record a short reference, hear it say something new, then start a conversation.
 Speech recognition and generation run on your Mac; you choose the service that
 answers. The Voicebox desktop app can stay closed.
 
-![Voicebox Studio: voice setup, conversation and optional pipeline details](docs/studio.png)
+![LiveKit Voice Studio: local routing and conversation workspace](docs/studio-local.jpg)
+
+[Two-minute demo walkthrough](docs/demo.md) · [First-run guide](docs/quickstart.md)
 
 ## Development preview
 
