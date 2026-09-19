@@ -1,6 +1,6 @@
 # Record a voice and choose the conversation providers
 
-Studio keeps three choices separate:
+Studio keeps the LiveKit connection independent from three processing stages:
 
 - **Listen:** turn microphone audio into text.
 - **Reason:** produce an answer from that text.
@@ -52,11 +52,13 @@ reference and must be judged by listening.
 
 ## Provider settings
 
-The demo offers fixed, reproducible presets rather than an unsupported list of
-model names:
+Existing cloud integrations use fixed presets. Ollama and custom endpoints let
+you choose the installed model explicitly:
 
 | Reasoning provider | Requested model | Reasoning |
 | --- | --- | --- |
+| Ollama | `qwen3:1.7b` initially; editable | Disabled for voice latency |
+| OpenAI-compatible | Your model identifier | None requested |
 | Copilot runtime | `gpt-5.6-luna` | `low` |
 | Codex runtime | `gpt-5.6-luna` | `low` |
 | Azure OpenAI | Existing configured `gpt-4.1-nano` deployment | None requested |
@@ -74,9 +76,11 @@ the app or changing a dropdown.
 ## Configuration precedence
 
 The workspace `.env` holds credentials and machine-specific paths. The private
-library `settings.json` stores only the chosen providers, preset and voice ID.
-Saved UI settings take precedence for those choices. No browser API accepts
-Azure keys, arbitrary endpoints, executable paths or command-line arguments.
+library `settings.json` stores nonsecret providers, model, validated model endpoint,
+LiveKit mode and voice ID. Saved UI settings take precedence for those choices.
+No browser API accepts credentials, executable paths or command-line arguments.
+Custom endpoint tokens stay in `VOICEBOX_CUSTOM_LLM_API_KEY` on the server.
+See [local/cloud setup](local-cloud-components.md).
 
 The default library location is:
 
@@ -101,7 +105,8 @@ commands are confined to a fresh private workspace and minimum runtime files;
 command networking and external capabilities are disabled and verified.
 Trusted global Codex instructions still apply. The UI never calls this
 tool-free, and switching away clears the saved restricted-mode consent.
-Both providers are tested with `gpt-5.6-luna` and `low`; Copilot remains the default.
+Both agent providers are tested with `gpt-5.6-luna` and `low`. New libraries default
+to Ollama; existing provider choices are preserved.
 
 Stopping speech and interrupting an agent turn are separate operations. The
 adapter must suppress stale deltas and settle the prior turn before reuse.

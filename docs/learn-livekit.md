@@ -1,7 +1,7 @@
 # Learn LiveKit through a conversation
 
 Start with the [quickstart](quickstart.md). Hear a local generated sample before
-connecting a conversation, then open **Learn LiveKit** in Studio. The view explains
+connecting a conversation, then open **How it works** in Studio. The view explains
 the running application; it is not a simulated claim that every component works.
 Missing measurements mean “not reported,” not zero.
 

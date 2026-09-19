@@ -42,6 +42,34 @@ def report_startup(stage: str) -> str:
     return stage
 
 
+def local_speech_error(error: Any) -> str:
+    """Only known adapter messages may cross the private-worker boundary."""
+    messages = {
+        "Nemotron connection timed out": (
+            "Local speech connection timed out. End the session and retry."
+        ),
+        "Nemotron finalization timed out": (
+            "Local speech finalization timed out. End the session and retry."
+        ),
+        "Nemotron input buffer overloaded": (
+            "Local speech input buffer filled up. End the session and reduce system load."
+        ),
+        "Nemotron event buffer overloaded": (
+            "Local speech event buffer filled up. End the session and retry."
+        ),
+        "Nemotron sidecar rejected the stream": (
+            "Local speech service rejected the audio stream. End the session and retry."
+        ),
+        "Nemotron sidecar disconnected": (
+            "Local speech connection closed unexpectedly. End the session and retry."
+        ),
+    }
+    reason = getattr(error, "message", None)
+    if isinstance(reason, str) and reason in messages:
+        return messages[reason]
+    return "Speech recognition reported an error. Try ending the session."
+
+
 async def run() -> None:
     loop = asyncio.get_running_loop()
     stop = asyncio.Event()
@@ -168,6 +196,9 @@ async def run() -> None:
                 # AgentLLM's public errors are already sanitized static diagnostics.
                 reason = getattr(event.error, "error", None)
                 report("error", message=f"Agent response failed: {str(reason)[:180]}")
+                return
+            if provider_choices()[0] == "nemotron" and event.source is speech:
+                report("error", message=local_speech_error(getattr(event.error, "error", None)))
                 return
             component = (
                 "Speech recognition"

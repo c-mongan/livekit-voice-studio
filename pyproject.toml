@@ -24,6 +24,8 @@ mypy_path = "livekit-plugins-voicebox"
 files = [
     "livekit-plugins-voicebox/livekit/plugins/voicebox",
     "examples/minimal_agent.py",
+    "examples/component_endpoints.py",
+    "examples/endpoint_llm.py",
     "benchmarks/benchmark_tts.py",
     "benchmarks/conversation_stats.py",
     "examples/studio.py",

@@ -15,6 +15,13 @@ import numpy as np
 import soundfile as sf
 from livekit.plugins.voicebox.errors import ConfigurationError
 
+from examples.component_endpoints import (
+    DEFAULT_LLM_URL,
+    ENDPOINT_PROVIDERS,
+    apply_livekit,
+    livekit_configuration,
+    validate_endpoint,
+)
 from examples.voice_bundle import load_bundle, save_bundle
 
 MAX_RECORDING_BYTES = 4 * 1024 * 1024
@@ -87,6 +94,7 @@ class StudioLibrary:
         self.voices = self.root / "voices"
         self.voices.mkdir(exist_ok=True, mode=0o700)
         self.settings_path = self.root / "settings.json"
+        self._configured_livekit = livekit_configuration.capture(os.environ)
 
     def voice_path(self, identifier: str) -> Path:
         if not re.fullmatch(r"[a-f0-9]{32}", identifier):
@@ -102,9 +110,11 @@ class StudioLibrary:
         if not self.settings_path.exists():
             return {
                 "sttProvider": "nemotron",
-                "llmProvider": "copilot",
-                "llmModel": "gpt-5.6-luna",
-                "reasoningEffort": "low",
+                "llmProvider": "ollama",
+                "llmModel": "qwen3:1.7b",
+                "reasoningEffort": "none",
+                "livekitMode": "local",
+                "llmBaseUrl": DEFAULT_LLM_URL,
                 "voiceId": None,
                 "codexRestrictedApproved": False,
             }
@@ -116,6 +126,8 @@ class StudioLibrary:
             data = json.loads(raw)
             if isinstance(data, dict):
                 data.setdefault("codexRestrictedApproved", False)
+                data.setdefault("livekitMode", "configured")
+                data.setdefault("llmBaseUrl", DEFAULT_LLM_URL)
             self._validate_settings(data)
             return dict(data)
         except (OSError, ValueError, TypeError, LibraryError):
@@ -131,16 +143,29 @@ class StudioLibrary:
             "reasoningEffort",
             "voiceId",
             "codexRestrictedApproved",
+            "livekitMode",
+            "llmBaseUrl",
         }
         if not isinstance(settings, dict) or set(settings) != required:
             raise LibraryError("Unsupported settings fields.")
         if settings["sttProvider"] not in ("nemotron", "azure", "openai"):
             raise LibraryError("Choose a supported speech recognition provider.")
         provider = settings["llmProvider"]
-        if not isinstance(provider, str) or provider not in PRESETS:
-            raise LibraryError("Choose Copilot, Codex, Azure or OpenAI.")
-        if (settings["llmModel"], settings["reasoningEffort"]) != PRESETS[provider]:
+        if not isinstance(provider, str) or provider not in (*PRESETS, *ENDPOINT_PROVIDERS):
+            raise LibraryError("Choose a supported reasoning provider.")
+        if (
+            provider in PRESETS
+            and (settings["llmModel"], settings["reasoningEffort"]) != PRESETS[provider]
+        ):
             raise LibraryError("The selected model and reasoning preset is not supported.")
+        if settings["livekitMode"] not in ("local", "configured"):
+            raise LibraryError("Choose local or configured LiveKit.")
+        try:
+            validate_endpoint(provider, settings["llmBaseUrl"], settings["llmModel"])
+            if provider in ENDPOINT_PROVIDERS and settings["reasoningEffort"] != "none":
+                raise ValueError("Local/custom models require no reasoning preset.")
+        except ValueError as error:
+            raise LibraryError(str(error)) from None
         if type(settings["codexRestrictedApproved"]) is not bool:
             raise LibraryError("Restricted agent consent must be a boolean.")
         if provider == "codex" and not settings["codexRestrictedApproved"]:
@@ -259,6 +284,8 @@ class StudioLibrary:
 
     def apply_environment(self) -> None:
         settings = self.settings()
+        apply_livekit(settings["livekitMode"], os.environ, self._configured_livekit)
+        os.environ["VOICEBOX_LLM_BASE_URL"] = settings["llmBaseUrl"]
         os.environ["VOICEBOX_STT_PROVIDER"] = settings["sttProvider"]
         os.environ["VOICEBOX_LLM_PROVIDER"] = settings["llmProvider"]
         os.environ["VOICEBOX_LLM_MODEL"] = settings["llmModel"]

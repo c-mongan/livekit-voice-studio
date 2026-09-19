@@ -153,3 +153,19 @@ def test_local_recognizer_finalize_is_owned_and_explicit():
     provider._streams.add(stream)
     provider.commit_utterance()
     stream.flush.assert_called_once()
+
+
+def test_local_speech_diagnostic_explains_known_failure_without_leaking_payload():
+    from livekit.agents import APIConnectionError
+
+    assert "connection timed out" in studio_worker.local_speech_error(
+        APIConnectionError("Nemotron connection timed out")
+    )
+    assert "buffer" in studio_worker.local_speech_error(
+        APIConnectionError("Nemotron input buffer overloaded")
+    )
+    message = studio_worker.local_speech_error(
+        APIConnectionError("private transcript at http://secret.invalid/token")
+    )
+    assert "private" not in message and "secret" not in message
+    assert message == studio_worker.local_speech_error(RuntimeError("secret"))

@@ -38,6 +38,12 @@ from livekit import api
 from livekit.plugins.voicebox.errors import VoiceboxError
 
 from examples.backend_lease import BackendLease, runtime_root
+from examples.component_endpoints import (
+    DEFAULT_LLM_URL,
+    ENDPOINT_PROVIDERS,
+    check_llm_endpoint,
+    is_loopback_url,
+)
 from examples.fast_qwen import FastQwenTTS
 from examples.minimal_agent import check_setup, configured_provider, provider_choices
 from examples.nemotron_service import NemotronService
@@ -192,14 +198,15 @@ class Studio:
             "ai": {
                 "provider": reasoning_choice,
                 "model": os.environ.get("VOICEBOX_LLM_MODEL", "gpt-5.6-luna")
-                if reasoning_choice in ("copilot", "codex")
+                if reasoning_choice in ("copilot", "codex", *ENDPOINT_PROVIDERS)
                 else os.environ.get("AZURE_OPENAI_MODEL", "gpt-4.1-nano")
                 if reasoning_choice == "azure"
                 else "gpt-4.1-mini",
                 "effort": os.environ.get("VOICEBOX_REASONING_EFFORT", "low")
                 if reasoning_choice in ("copilot", "codex")
                 else "none",
-                "local": False,
+                "local": reasoning_choice in ENDPOINT_PROVIDERS
+                and is_loopback_url(os.environ.get("VOICEBOX_LLM_BASE_URL", DEFAULT_LLM_URL)),
             },
             "stt": {
                 "provider": speech_choice,
@@ -211,10 +218,12 @@ class Studio:
                 "local": speech_choice == "nemotron",
             },
             "livekit": {
+                "mode": os.environ.get("VOICEBOX_LIVEKIT_MODE", "configured"),
+                "local": is_loopback_url(os.environ.get("LIVEKIT_URL", "")),
                 "configured": all(
                     os.environ.get(name)
                     for name in ("LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET")
-                )
+                ),
             },
             # Session handles are control capabilities; never reveal another tab's handle.
             "session": None,
@@ -409,6 +418,19 @@ class Studio:
         owned: OwnedSession | None = None
         room_created = False
         try:
+            reasoning = provider_choices()[1]
+            if reasoning in ENDPOINT_PROVIDERS:
+                try:
+                    await check_llm_endpoint(
+                        reasoning,
+                        os.environ.get("VOICEBOX_LLM_BASE_URL", DEFAULT_LLM_URL),
+                        os.environ.get("VOICEBOX_LLM_MODEL", "qwen3:1.7b"),
+                        os.environ.get("VOICEBOX_CUSTOM_LLM_API_KEY", "")
+                        if reasoning == "openai-compatible"
+                        else "",
+                    )
+                except (RuntimeError, ValueError) as error:
+                    raise StudioError(str(error), 503) from None
             if provider_choices()[0] == "nemotron":
                 if self.recognizer_service is None:
                     self.recognizer_service = NemotronService()
@@ -669,7 +691,9 @@ class Studio:
             self.phase = "draining"
         elif event == "uncertain":
             self.phase = "blocked"
-            self.message = "Inference completion is unknown. End the session and restart Voicebox."
+            self.message = (
+                "Inference completion is unknown. End the session and restart the voice backend."
+            )
         elif event == "finished":
             owned.finished = True
             owned.safe = data.get("safe") is True
@@ -773,7 +797,8 @@ class Studio:
                         self.message = owned.audition_message
                     else:
                         self.message = (
-                            "Agent exited without confirmed drain. Restart Voicebox, then restart "
+                            "Agent exited without confirmed drain. "
+                            "Confirm the voice backend has stopped, then restart "
                             "Studio with --confirm-backend-restarted."
                         )
                     if process.returncode is None and owned.end_task is None:
@@ -888,7 +913,8 @@ async def local_only(
     response.headers["Permissions-Policy"] = "microphone=(self), camera=(), display-capture=()"
     response.headers["Content-Security-Policy"] = (
         "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
-        "img-src 'self' data:; connect-src 'self' https: wss:; "
+        "img-src 'self' data:; connect-src 'self' https: wss: "
+        "http://127.0.0.1:7880 ws://127.0.0.1:7880; "
         "media-src 'self' blob:; worker-src 'self' blob:; "
         "frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
     )
@@ -1017,6 +1043,8 @@ def provider_options() -> dict[str, list[dict[str, Any]]]:
             ),
         ],
         "llm": [
+            option("ollama", "Ollama · local", True, ""),
+            option("openai-compatible", "Custom OpenAI-compatible endpoint", True, ""),
             option(
                 "copilot",
                 "Copilot · Luna low",

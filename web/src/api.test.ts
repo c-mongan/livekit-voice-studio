@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api, ApiError, auditionAudio, errorMessage, measuredSeconds, safeMessage, studioRequest } from './api';
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe('broker requests', () => {
   it('retrieves generated WAV with the job in a protected POST body', async () => {
@@ -85,4 +85,23 @@ describe('safe messages and measured data', () => {
   it.each([null, undefined, Number.NaN, Number.POSITIVE_INFINITY, -1])('does not invent a measurement for %s', (value) => expect(measuredSeconds(value)).toBe('Not measured'));
   it('preserves measured zero', () => expect(measuredSeconds(0)).toBe('0.00 s'));
   it('labels a real measurement in seconds', () => expect(measuredSeconds(1.234)).toBe('1.23 s'));
+});
+
+describe('session startup timeout', () => {
+  it('allows 60 seconds only for session POST, preserving ordinary and keepalive deadlines', async () => {
+    const signal = new AbortController().signal;
+    const timeout = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(signal);
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(async () => new Response('{}')));
+    await api('session', {});
+    await api('session');
+    await api('settings', {});
+    await api('session/end', { sessionId: 'owned' }, true);
+    expect(timeout.mock.calls).toEqual([[60_000], [15_000], [15_000]]);
+  });
+  it('explains slow session startup without claiming the server is down', async () => {
+    const fetch = vi.fn().mockRejectedValue(new DOMException('private endpoint', 'TimeoutError'));
+    vi.stubGlobal('fetch', fetch);
+    await expect(api('session', {})).rejects.toMatchObject({ status: 0, message: 'Local services are taking longer than expected to start. Wait for session cleanup to finish, then retry.' });
+    expect(fetch).toHaveBeenCalledOnce();
+  });
 });

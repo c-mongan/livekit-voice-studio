@@ -118,9 +118,9 @@ def test_codex_requires_explicit_restricted_agent_consent(tmp_path):
 def test_local_defaults_are_explicit_not_a_silent_azure_fallback(tmp_path):
     settings = StudioLibrary(tmp_path).settings()
     assert settings["sttProvider"] == "nemotron"
-    assert settings["llmProvider"] == "copilot"
-    assert settings["llmModel"] == "gpt-5.6-luna"
-    assert settings["reasoningEffort"] == "low"
+    assert settings["llmProvider"] == "ollama"
+    assert settings["llmModel"] == "qwen3:1.7b"
+    assert settings["reasoningEffort"] == "none"
 
 
 def test_azure_preset_accepts_no_effort_and_revokes_codex_consent(tmp_path):

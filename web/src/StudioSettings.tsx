@@ -4,17 +4,29 @@ import { VoiceEnrollment } from './VoiceEnrollment';
 import { useVoiceAudition } from './useVoiceAudition';
 import { VoiceAudition } from './VoiceAudition';
 
+const defaultEndpoint = 'http://127.0.0.1:11434/v1';
+function ollamaEndpoint(current: string | undefined): string {
+  if (!current || current.length > 2048 || /[\s\u0000-\u001f\u007f?#]/.test(current)) return defaultEndpoint;
+  try {
+    const url = new URL(current);
+    const loopback = url.hostname === 'localhost' || url.hostname === '[::1]' || /^127(?:\.\d{1,3}){3}$/.test(url.hostname);
+    return loopback && ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password && url.port !== '0'
+      ? current : defaultEndpoint;
+  } catch { return defaultEndpoint; }
+}
 const presets: Record<string, { model: string; effort: string }> = {
+  ollama: { model: 'qwen3:1.7b', effort: 'none' }, 'openai-compatible': { model: '', effort: 'none' },
   copilot: { model: 'gpt-5.6-luna', effort: 'low' }, codex: { model: 'gpt-5.6-luna', effort: 'low' },
   azure: { model: 'gpt-4.1-nano', effort: '' }, openai: { model: 'gpt-4.1-mini', effort: '' },
 };
 
-export function StudioSettings({ locked, onChanged, status, onAuditionBusy, requestedTab, onRequestHandled, onOpen }: {
+export function StudioSettings({ locked, onChanged, status, onAuditionBusy, requestedTab, onRequestHandled, onOpen, onRoutingChanged }: {
   locked: boolean; onChanged: () => void | Promise<void>; status?: StudioStatus | null;
   onAuditionBusy?: (busy: boolean) => void;
   requestedTab?: 'providers' | 'voices' | null;
   onRequestHandled?: () => void;
   onOpen?: () => void;
+  onRoutingChanged?: () => void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const trigger = useRef<HTMLElement | null>(null);
@@ -44,7 +56,7 @@ export function StudioSettings({ locked, onChanged, status, onAuditionBusy, requ
     try {
       const [settings, voices] = await Promise.all([api<StudioConfig>('settings'), api<VoiceLibrary>('voices')]);
       if (request.current !== id) return;
-      setConfig(settings); setLibrary(voices);
+      setConfig({ ...settings, livekitMode: settings.livekitMode ?? 'configured', llmBaseUrl: settings.llmBaseUrl ?? defaultEndpoint }); setLibrary(voices);
     } catch (cause) { if (request.current === id) setError(errorMessage(cause, 'Configuration could not be loaded. Check the local server and retry.')); }
     finally { if (request.current === id) setLoading(false); }
   }
@@ -70,11 +82,11 @@ export function StudioSettings({ locked, onChanged, status, onAuditionBusy, requ
     setOpen(false); setEnrolling(false); setPreview(null); setFocusedVoice(null); setDeleting(null); setRenaming(null); setNotice('');
     dialog.current?.close(); trigger.current?.focus();
   }
-  async function mutate(action: () => Promise<unknown>, success: string) {
+  async function mutate(action: () => Promise<unknown>, success: string, routingChanged = false) {
     if (disabled || inFlight.current) return;
     audition.cancel();
     inFlight.current = true; setBusy(true); setError(null); setNotice('');
-    try { await action(); setNotice(success); setDeleting(null); setRenaming(null); await load(); await onChanged(); }
+    try { await action(); if (routingChanged) onRoutingChanged?.(); setNotice(success); setDeleting(null); setRenaming(null); await load(); await onChanged(); }
     catch (cause) { setError(errorMessage(cause, 'The change could not be saved. Check the local server and retry.')); }
     finally { inFlight.current = false; setBusy(false); }
   }
@@ -114,21 +126,27 @@ export function StudioSettings({ locked, onChanged, status, onAuditionBusy, requ
             <h3 className="drawer-section-title">The path from speech to reply</h3>
             <p className="field-help">Changes apply to the next session. Credentials stay on the server.</p>
             <fieldset disabled={disabled} className="provider-fields">
+              <label className="field">LiveKit connection<select value={config.livekitMode} onChange={(event) => setConfig({ ...config, livekitMode: event.target.value as 'local' | 'configured' })}><option value="local">This computer</option><option value="configured">Configured cloud or self-hosted server</option></select></label>
+              <p className="route-note">{config.livekitMode === 'local' ? 'Conversation audio and text travel through LiveKit on this computer. Start the local LiveKit server before connecting.' : 'Conversation audio and text travel through your configured LiveKit server. Its address and credentials stay in the server’s .env file.'}</p>
               <label className="field">Speech recognition<select value={config.sttProvider} onChange={(event) => setConfig({ ...config, sttProvider: event.target.value })}>{config.providers.stt.map((provider) => <option key={provider.id} value={provider.id} disabled={!provider.available}>{provider.label}{!provider.available ? ' - unavailable' : ''}</option>)}</select></label>
               <p className="route-note">{config.sttProvider === 'nemotron' ? 'Local recognition. Microphone audio is transcribed on this machine.' : 'Cloud recognition. Microphone audio is sent to your selected speech provider.'}</p>
               {config.providers.stt.filter((provider) => !provider.available).map((provider) => <p className="field-help" key={provider.id}>{provider.label}: {provider.reason || 'Not available on this server.'}</p>)}
               <label className="field">Reasoning provider<select value={config.llmProvider} onChange={(event) => {
                 const provider = event.target.value; const preset = presets[provider];
-                if (preset) setConfig({ ...config, llmProvider: provider, llmModel: preset.model, reasoningEffort: preset.effort, codexRestrictedApproved: false });
+                if (preset) setConfig({ ...config, llmProvider: provider, llmModel: preset.model, reasoningEffort: preset.effort, codexRestrictedApproved: false, llmBaseUrl: provider === 'ollama' ? ollamaEndpoint(config.llmBaseUrl) : config.llmBaseUrl });
               }}>{config.providers.llm.map((provider) => <option key={provider.id} value={provider.id} disabled={!provider.available || !presets[provider.id]}>{provider.label}{!provider.available ? ' - unavailable' : ''}</option>)}</select></label>
-              <div className="model-summary"><span>Remote model</span><strong>{config.llmModel}</strong>{config.reasoningEffort && config.reasoningEffort !== 'none' && <span>Reasoning effort: {config.reasoningEffort}</span>}</div>
-              <p className="route-note">Conversation text goes to this provider. Copilot and Codex use remote models, not local inference. Runtime availability is checked when connecting.</p>
+              {['ollama', 'openai-compatible'].includes(config.llmProvider) ? <>
+                <label className="field">Model name<input name="llmModel" value={config.llmModel} onChange={(event) => setConfig({ ...config, llmModel: event.target.value })} placeholder={config.llmProvider === 'ollama' ? 'qwen3:1.7b' : 'Model available at your endpoint'} /></label>
+                <label className="field">API endpoint<input name="llmBaseUrl" type="url" value={config.llmBaseUrl} onChange={(event) => setConfig({ ...config, llmBaseUrl: event.target.value })} /></label>
+                <p className="route-note">{config.llmProvider === 'ollama' ? 'Local reasoning. Start Ollama and prepare the named model first. Use a loopback endpoint on this computer; models are never downloaded automatically. The first reply can take longer while the model loads. On a 16 GB Mac, start with a small model.' : 'Conversation text is sent to this endpoint. Its location determines whether reasoning is local or remote. If it needs an API key, set VOICEBOX_CUSTOM_LLM_API_KEY in the server’s .env file.'}</p>
+              </> : <><div className="model-summary"><span>Remote model</span><strong>{config.llmModel}</strong>{config.reasoningEffort && config.reasoningEffort !== 'none' && <span>Reasoning effort: {config.reasoningEffort}</span>}</div>
+              <p className="route-note">Conversation text goes to this provider. Copilot and Codex use remote models, not local inference. Runtime availability is checked when connecting.</p></>}
               {config.llmProvider === 'codex' && <label className="consent"><input type="checkbox" checked={config.codexRestrictedApproved === true} onChange={(event) => setConfig({ ...config, codexRestrictedApproved: event.target.checked })} /><span>I accept restricted Codex: commands are limited to a private workspace and minimal runtime files, command networking and external tools are disabled, and my global Codex instructions are trusted. This is not tool-free mode.</span></label>}
               {config.providers.llm.filter((provider) => !provider.available).map((provider) => <p className="field-help" key={provider.id}>{provider.label}: {provider.reason || 'Not available on this server.'}</p>)}
               <div className="local-synthesis"><strong>Speech synthesis stays local</strong><p>Your selected voice is used by Qwen on this machine. The reference recording is not sent to LiveKit or your reasoning provider.</p></div>
-              <button className="button primary" disabled={disabled || (config.llmProvider === 'codex' && !config.codexRestrictedApproved) || !config.providers.stt.find((p) => p.id === config.sttProvider)?.available || !config.providers.llm.find((p) => p.id === config.llmProvider)?.available} onClick={() => void mutate(() => api('settings', { sttProvider: config.sttProvider, llmProvider: config.llmProvider, llmModel: config.llmModel, reasoningEffort: config.reasoningEffort, codexRestrictedApproved: config.codexRestrictedApproved === true }), 'Settings saved for the next session.')}>{busy ? 'Saving...' : 'Save settings'}</button>
+              <button className="button primary" disabled={disabled || !config.llmModel.trim() || (['ollama', 'openai-compatible'].includes(config.llmProvider) && !config.llmBaseUrl?.trim()) || (config.llmProvider === 'codex' && !config.codexRestrictedApproved) || !config.providers.stt.find((p) => p.id === config.sttProvider)?.available || !config.providers.llm.find((p) => p.id === config.llmProvider)?.available} onClick={() => void mutate(() => api('settings', { livekitMode: config.livekitMode, llmBaseUrl: config.llmBaseUrl, sttProvider: config.sttProvider, llmProvider: config.llmProvider, llmModel: config.llmModel, reasoningEffort: config.reasoningEffort, codexRestrictedApproved: config.codexRestrictedApproved === true }), 'Settings saved for the next session.', true)}>{busy ? 'Saving...' : 'Save settings'}</button>
             </fieldset>
-            <p className="privacy-footnote">LiveKit still transports conversation audio and text between this browser and the agent. Local speech recognition does not make the entire conversation local.</p>
+            <p className="privacy-footnote">Connection, speech recognition and reasoning are independent choices. Review the conversation privacy notice after saving; local recognition alone does not make the entire conversation local.</p>
           </section>}
           {tab === 'voices' && library && <section role="tabpanel" id="panel-voices" aria-labelledby="tab-voices">
             {enrolling ? <VoiceEnrollment guidedText={library.guidedText} locked={locked} onCancel={() => setEnrolling(false)} onSaved={async (voice) => { setEnrolling(false); setFocusedVoice(voice.id); setNotice('Private voice saved. Generate a sample below to hear the clone, then choose it for chat.'); await load(); await onChanged(); }} /> : <>

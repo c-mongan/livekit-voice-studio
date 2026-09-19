@@ -74,24 +74,31 @@ returned by the preceding setup steps):
 | `VOICEBOX_STT_PROVIDER` | `nemotron` |
 | `NEMOTRON_SERVER_BINARY` | Absolute path ending in `build/bin/nemo-speech` |
 | `NEMOTRON_MODEL_PATH` | Absolute path to the verified `.gguf` model |
-| `VOICEBOX_LLM_PROVIDER` | `copilot` |
+| `VOICEBOX_LLM_PROVIDER` | `ollama` |
+| `VOICEBOX_LLM_MODEL` | `qwen3:1.7b` |
+| `VOICEBOX_LLM_BASE_URL` | `http://127.0.0.1:11434/v1` |
+| `VOICEBOX_LIVEKIT_MODE` | `local` |
 | `VOICEBOX_EXCLUSIVE` | `1`, after stopping competing generation jobs |
 
 Leave `VOICEBOX_VOICE_BUNDLE` empty until you record and select a voice in the
 app. Selecting it saves the choice in the private local library. No external
 Voicebox server is required for this path. Do not run `.env` as a shell script.
 
-For conversations, add a LiveKit project's URL, API key and secret. Install and
-sign in to Copilot CLI, then verify your account offers Luna with low reasoning.
-The [agent-provider guide](agent-providers.md) covers supported versions and
-restrictions. Azure or OpenAI can be configured instead; there is no automatic
-fallback. Codex requires separate restricted-agent consent.
-The preset was tested with the installed account/runtime combination, not every
-subscription. If your account lacks it, choose a supported configured Azure or
-OpenAI option rather than assuming the preset is universally available.
+For local conversations, prepare Ollama and LiveKit using the
+[local/cloud component guide](local-cloud-components.md). New libraries default
+to local LiveKit and Ollama; existing libraries retain their provider and configured
+LiveKit server. Settings lets you switch either component independently.
 
-Voice recording and local generated auditions do not need cloud credentials.
-Conversations do: local speech does not make remote reasoning or LiveKit offline.
+For remote reasoning, configure an existing Copilot, Azure or OpenAI provider.
+The [agent-provider guide](agent-providers.md) covers account/runtime requirements.
+Codex requires separate restricted-agent consent. For LiveKit Cloud or your own
+remote server, keep its URL/key/secret in `.env` and choose **Configured server**.
+There is no automatic fallback between local and remote services.
+
+Voice recording and local generated auditions do not need LiveKit or an LLM.
+An all-local conversation also needs the local LiveKit and Ollama services running
+and all selected models installed. Choosing remote reasoning or transport sends
+that part of the conversation to the selected service.
 
 Check the local setup without starting services or contacting providers:
 
@@ -153,7 +160,7 @@ confirms local configuration, not account access or model synthesis. Missing
 LiveKit credentials do not block a local voice sample. **Check microphone** records
 up to eight seconds for local replay; nothing is uploaded or saved.
 
-The default view focuses on conversation. **Learn LiveKit** reveals the pipeline,
+The default view focuses on conversation. **How it works** reveals the pipeline,
 room state and measured generation delays. Try the [learning exercises](learn-livekit.md).
 
 To compare turn-taking, set `VOICEBOX_TURN_DETECTION=audio-local` in your private

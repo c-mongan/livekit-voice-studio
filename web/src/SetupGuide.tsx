@@ -46,7 +46,7 @@ export function SetupGuide({ disabled = false, onVoices, onSettings }: { disable
         <li><h3>Record and hear your voice</h3><p>Record a short passage, check its words, then generate a new sample. With the local speech model installed, you can do this without a LiveKit or AI account.</p>
           <button className="button secondary" disabled={disabled} onClick={onVoices}>Open voice library</button>
         </li>
-        <li><h3>Connect your conversation</h3><p>Choose speech recognition and an AI service in Settings. LiveKit carries the conversation audio; your reference recording stays on this computer. Account access is checked when you start.</p>
+        <li><h3>Connect your conversation</h3><p>Choose the LiveKit connection, speech recognition and reasoning independently in Settings. For local chat, start LiveKit and Ollama and prepare your chosen model. For remote services, configure credentials on the server. Your reference recording stays on this computer. Availability is checked when you start.</p>
           <button className="button secondary" disabled={disabled} onClick={onSettings}>Choose conversation services</button>
         </li>
         <li><h3>Start with a message</h3><p>Close this guide, acknowledge where your conversation goes, then type a message. Turn on your microphone only when you want to speak.</p></li>
