@@ -123,3 +123,28 @@ directly with `STUDIO_TEST_TURNS=2` and `STUDIO_TEST_PAUSE_SECONDS=20`, alongsid
 `STUDIO_SPOKEN_INTEGRATION=1` and the existing `STUDIO_TEST_AUDIO` fixture.
 The pause is bounded to 0–30 seconds and defaults to zero. It tests an idle input
 stream, not recognition under continuous room noise.
+
+## Interruption recovery and repeated sessions
+
+To test the already-running managed Studio server, end any current conversation,
+select an all-local route and an authorized voice, then run:
+
+```sh
+STUDIO_RELIABILITY_INTEGRATION=1 uv run --no-sync python -m pytest \
+  tests/integration/test_running_studio.py -q -s
+```
+
+This opt-in test runs two sequential sessions with synthetic typed prompts. It
+requires local LiveKit, recognition and reasoning, and does not capture a
+microphone. In each session it verifies that a concurrent Start is rejected,
+waits for real nonzero reply audio, interrupts while the agent reports speaking,
+waits for listening and quiet, then requires both new audio and a matching
+agent transcript for a follow-up. Audio from other participants is ignored. Finally
+it ends the owned session and requires cleanup back to idle before starting the
+next session. It does not stop the Studio server or clear unresolved-work markers.
+
+An interruption acknowledgement alone is not a pass. The follow-up and subsequent
+session must work. The test covers the Stop reply RPC, not natural microphone
+barge-in, human voice quality, or long-session endurance. It never downloads a
+model or changes the selected provider. Failures stay failures; do not clear a
+blocked backend just to rerun this check.

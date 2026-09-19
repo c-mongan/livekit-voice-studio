@@ -8,8 +8,9 @@ from examples import studio_worker
 
 @pytest.mark.parametrize("turn_mode", ["vad", "invalid"])
 @pytest.mark.parametrize("drain_succeeds", [True, False])
+@pytest.mark.parametrize("session_already_closed", [True, False])
 async def test_rpc_registration_follows_connection_and_shutdown_drains(
-    monkeypatch, drain_succeeds, turn_mode
+    monkeypatch, drain_succeeds, turn_mode, session_already_closed
 ):
     reports = []
     order = []
@@ -72,7 +73,11 @@ async def test_rpc_registration_follows_connection_and_shutdown_drains(
         on=lambda name: lambda callback: callback,
         start=AsyncMock(side_effect=start),
         aclose=AsyncMock(),
-        interrupt=AsyncMock(),
+        interrupt=AsyncMock(
+            side_effect=RuntimeError("AgentSession isn't running")
+            if session_already_closed
+            else None
+        ),
     )
     speech, model = SimpleNamespace(aclose=AsyncMock()), SimpleNamespace(aclose=AsyncMock())
     monkeypatch.setattr(studio_worker.rtc, "Room", Room)
@@ -112,7 +117,8 @@ async def test_rpc_registration_follows_connection_and_shutdown_drains(
     assert order.index("connect") < order.index("rpc")
     assert order.index("provider-drained") < order.index("disconnect")
     assert reports[-1] == ("finished", {"safe": drain_succeeds})
-    session.interrupt.assert_awaited_once_with(force=True)
+    session.aclose.assert_awaited_once()
+    session.interrupt.assert_not_awaited()
 
 
 def test_disconnected_supervisor_does_not_prevent_cleanup(monkeypatch, caplog):

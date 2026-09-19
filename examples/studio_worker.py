@@ -319,7 +319,8 @@ async def run() -> None:
         report("draining")
         try:
             if session is not None:
-                await session.interrupt(force=True)
+                # aclose already interrupts and drains. A separate interrupt can
+                # raise if room disconnect closed the session before SIGTERM.
                 await session.aclose()
         finally:
             try:
