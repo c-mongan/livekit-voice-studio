@@ -701,3 +701,36 @@ async def test_small_frames_still_obey_item_bound() -> None:
     assert channel.audio_bytes < channel.byte_limit
     with pytest.raises(BufferError):
         channel.send_nowait(frame(milliseconds=1))
+
+
+@pytest.mark.parametrize("finish_delay", [0.22, 0.36])
+async def test_heartbeat_does_not_preempt_valid_native_finalization(
+    native: tuple[NativeServer, str], monkeypatch: pytest.MonkeyPatch, finish_delay: float
+) -> None:
+    import aiohttp
+
+    runtime, url = native
+    runtime.release_commit.clear()
+    original_connect = aiohttp.ClientSession.ws_connect
+
+    def scaled_connect(self: Any, *args: Any, **kwargs: Any) -> Any:
+        # Compress heartbeat time so this exercises the real ping/pong failure
+        # path without a 15-second CI wait. Native processing blocks its reader.
+        kwargs["heartbeat"] /= 100
+        return original_connect(self, *args, **kwargs)
+
+    monkeypatch.setattr(aiohttp.ClientSession, "ws_connect", scaled_connect)
+    async with NemotronSTT(base_url=url, finalize_timeout=15) as provider:
+        stream = provider.stream(conn_options=APIConnectOptions(max_retry=0))
+        try:
+            stream.push_frame(frame())
+            await asyncio.wait_for(runtime.audio_received.wait(), 1)
+            stream.end_input()
+            await asyncio.wait_for(runtime.commit_received.wait(), 1)
+            await asyncio.sleep(finish_delay)
+            runtime.release_commit.set()
+            events = await collect(stream)
+            assert any(e.type == stt.SpeechEventType.FINAL_TRANSCRIPT for e in events)
+        finally:
+            runtime.release_commit.set()
+            await stream.aclose()

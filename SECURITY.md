@@ -4,9 +4,9 @@ This is a single-user technical prototype, not a hosted multi-user service.
 Keep Studio bound to loopback. Do not expose it through a public tunnel or use
 the development token broker as an internet authentication service.
 
-Report suspected vulnerabilities privately to the repository owner. If GitHub
-private vulnerability reporting is enabled, use **Security → Report a
-vulnerability**; otherwise arrange a private channel before sending details.
+Report suspected vulnerabilities through [GitHub private vulnerability reporting](https://github.com/c-mongan/livekit-voice-studio/security/advisories/new)
+(**Security → Report a vulnerability**). This private reporting route is enabled
+for this repository.
 Do not open a public issue containing credentials, voice samples or exploit data.
 
 Include the affected version, a minimal reproduction using synthetic input,

@@ -1,6 +1,10 @@
 # Development
 
 Work in an isolated checkout. Use Python 3.11-3.13 and the committed `uv.lock`.
+The command below installs dependencies for offline checks. On an Apple Silicon
+checkout that also runs Studio, include `--extra mlx` in the `uv sync` command.
+Syncing with fewer extras removes previously installed optional dependencies;
+preserve the extras used by your working installation.
 
 ```sh
 uv sync --frozen --package livekit-plugins-voicebox --extra dev --extra example --extra azure --extra agents --python 3.12

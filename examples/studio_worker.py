@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import signal
 from typing import Any
 
@@ -73,6 +74,40 @@ def local_speech_error(error: Any) -> str:
     if isinstance(reason, str) and reason in messages:
         return messages[reason]
     return "Speech recognition reported an error. Try ending the session."
+
+
+def conversation_instructions(language_model: Any) -> str:
+    """Describe the actual configured adapter without copying credentials or endpoints."""
+    provider = provider_choices()[1]
+    if provider not in ("ollama", "openai-compatible", "openai", "azure", "copilot", "codex"):
+        provider = "not reported"
+    model = getattr(language_model, "model", None)
+    if (
+        not isinstance(model, str)
+        or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/+-]{0,199}", model) is None
+        or "://" in model
+    ):
+        model = "not reported"
+    identity = json.dumps({"reasoning_provider": provider, "configured_model": model})
+    return (
+        "You are the assistant in LiveKit Voice Studio. "
+        f"Your runtime configuration is {identity}. "
+        "When asked what model you are, report this configured provider and model. "
+        "This is a configured identifier, not independent verification of the weights. "
+        "Do not invent a model version, creator, hosting location or capabilities. "
+        "If a field is not reported, say you do not know it. "
+        "You are a helpful conversational assistant, not a coding agent. "
+        "Use one or two short sentences in plain text, usually under 40 words. "
+        "Respond to the latest point instead of repeating greetings "
+        "or stock acknowledgements. "
+        "For casual chat, offer one relevant thought or gentle follow-up when useful; "
+        "do not ask a question every turn. A brief okay or thanks is not necessarily "
+        "a goodbye; only close the conversation when the user clearly ends it. "
+        "If interrupted, follow the user’s new direction "
+        "without finishing the old reply. "
+        "Do not use markdown or lists unless asked. Do not claim actions or access "
+        "to files or tools you do not have. Your speech is synthetic."
+    )
 
 
 async def run() -> None:
@@ -263,21 +298,7 @@ async def run() -> None:
                 participant_identity=owner,
                 close_on_disconnect=True,
             ),
-            agent=Agent(
-                instructions=(
-                    "You are a helpful conversational assistant, not a coding agent. "
-                    "Use one or two short sentences in plain text, usually under 40 words. "
-                    "Respond to the latest point instead of repeating greetings "
-                    "or stock acknowledgements. "
-                    "For casual chat, offer one relevant thought or gentle follow-up when useful; "
-                    "do not ask a question every turn. A brief okay or thanks is not necessarily "
-                    "a goodbye; only close the conversation when the user clearly ends it. "
-                    "If interrupted, follow the user’s new direction "
-                    "without finishing the old reply. "
-                    "Do not use markdown or lists unless asked. Do not claim actions or access "
-                    "to files or tools you do not have. Your speech is synthetic."
-                )
-            ),
+            agent=Agent(instructions=conversation_instructions(language_model)),
         )
         report("ready")
         # No automatic spoken greeting: typed-first users can connect without surprise audio.

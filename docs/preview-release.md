@@ -1,5 +1,7 @@
 # Development preview — unreleased
 
+Latest bounded follow-up: [quality-pass results and remaining acceptance work](preview-quality-2026-09-19.md).
+
 ## What works in the tested setup
 
 Standalone Studio supports independent local or configured LiveKit transport and

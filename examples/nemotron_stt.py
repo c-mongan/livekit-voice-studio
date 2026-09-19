@@ -330,7 +330,11 @@ class NemotronSpeechStream(stt.SpeechStream):
                     self._provider.base_url + "/v1/realtime",
                     max_msg_size=65536,
                     timeout=aiohttp.ClientWSTimeout(ws_close=0.5),
-                    heartbeat=10,
+                    # The native reader cannot answer pings while finishing ASR.
+                    # aiohttp allows only heartbeat/2 for a pong; give that wait
+                    # at least the operation deadline. Finalization itself still
+                    # fails at finalize_timeout, rather than extending inference.
+                    heartbeat=max(10.0, 2 * self._provider.finalize_timeout),
                     headers={"Origin": self._provider.base_url},
                 ) as ws,
             ):

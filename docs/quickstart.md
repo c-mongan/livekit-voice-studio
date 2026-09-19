@@ -1,7 +1,9 @@
 # First run on an Apple Silicon Mac
 
 This is the supported fast-voice path. You need Python 3.12, Node.js 22.12+, `uv`,
-Git and Xcode Command Line Tools. The reference machine has 16 GiB RAM.
+Git and Xcode Command Line Tools. The local LiveKit installation below uses
+[Homebrew](https://brew.sh/); install it first or use the alternative installation
+methods linked in the [component guide](local-cloud-components.md). The reference machine has 16 GiB RAM.
 Allow roughly 12 GiB free for a fresh setup, including download/build caches;
 that is a planning margin, not a runtime memory requirement.
 
@@ -138,6 +140,19 @@ First connection prepares the model and reference before the agent is ready.
 Subsequent turns reuse that process. End the session before changing voices or
 auditioning another one. Voicebox can stay closed throughout this workflow.
 
+### Check your first successful conversation
+
+1. Confirm the four route labels say **This computer** for an all-local session.
+2. Start with the microphone off and ask “What model are you?” The answer should
+   match your selected reasoning model; Settings is the source of truth.
+3. Turn the microphone on, ask a short question and wait for a spoken reply.
+4. End the session and confirm **Ready to start** returns. A page that opens or
+   a passing setup check alone is not the finish line.
+
+If a step fails, use the table below. For a first contribution, report the first
+confusing or failing step using the repository's installation/conversation issue
+form. Use synthetic text and remove credentials and private audio.
+
 ## Browser setup and learning tools
 
 Standalone mode uses this project's own Studio server, voice library and Qwen
@@ -167,6 +182,23 @@ To compare turn-taking, set `VOICEBOX_TURN_DETECTION=audio-local` in your privat
 `.env` and restart Studio after ending your session. This selects LiveKit’s bundled
 CPU audio turn detector. Keep `vad` to retain the existing behavior. Judge pauses
 and interruptions on your microphone; a configured detector is not quality proof.
+
+## After restarting your Mac
+
+Studio, LiveKit and Ollama are separate services. Starting Studio does not start
+the other two. If you use the local route:
+
+1. Start your existing Ollama app/service. If you installed only its CLI, run
+   `ollama serve` in a terminal. Keep your existing model directory and port;
+   do not download a second copy just because the service is stopped.
+2. Run `livekit-server --dev --bind 127.0.0.1` in another terminal.
+3. Run `./studio start --open`, then check the selected route before connecting.
+
+An unresolved-inference marker deliberately blocks startup after an interrupted
+session. A responding health check alone does not justify clearing it. Follow
+[the recovery procedure](launching.md), confirm the synthesis backend and its
+workers have stopped or restarted, then use the documented recovery command.
+This applies to standalone Qwen as well as the optional Voicebox backend.
 
 ## If the first attempt fails
 
