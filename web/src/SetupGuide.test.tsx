@@ -38,3 +38,24 @@ it('clears old results when a recheck fails rather than presenting stale passes'
   expect(host.querySelector('[role="alert"]')).not.toBeNull();
   expect(host.textContent).not.toContain('Model verified in old check');
 });
+
+it.each([null, {version: 1, checks: []}, {version: 1, checks: [{id: {}, status: 'pass', message: 'Found', action: ''}]}, {version: 1, checks: [{id: 'qwen', status: 'pass', message: {}, action: ''}]}])('rejects malformed setup reports without presenting success: %j', async (report) => {
+  fetcher.mockResolvedValue({ ok: true, json: async () => report });
+  await render();
+  await act(async () => button('First conversation guide').click());
+  expect(host.querySelector('[role="alert"]')).not.toBeNull();
+  expect(host.querySelector('.setup-checks')).toBeNull();
+});
+it('puts actionable failures first and keeps found checks in a disclosure', async () => {
+  fetcher.mockResolvedValue({ ok: true, json: async () => ({version: 1, checks: [
+    { id: 'qwen', status: 'pass', message: 'Model found', action: '' },
+    { id: 'voice', status: 'missing', message: 'Select a voice', action: 'Open voice library' },
+    { id: 'runtime', status: 'unverified', message: 'Synthesis not tested', action: '' },
+  ]}) });
+  await render();
+  await act(async () => button('First conversation guide').click());
+  expect(host.textContent).toContain('1 item needs setup');
+  expect(host.querySelector('.setup-checks li')?.textContent).toContain('Select a voice');
+  expect(host.querySelector('details')?.textContent).toContain('Model found');
+  expect(host.querySelector('details')?.open).toBe(false);
+});

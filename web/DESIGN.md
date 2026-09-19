@@ -208,3 +208,12 @@ the existing bundle-size warning. Browser checks verified Light/Dark appearance,
 persistence after reload, compact density, mobile tabs at 390 px, the Audio-to-mic
 check flow (microphone remained off), and navigation. System-change handling and
 storage failures were checked with focused tests. Voice inference was unchanged.
+
+## Guided troubleshooting and first-run recovery
+
+Setup validates the complete bounded report shape before rendering. Missing items
+appear first, unverified checks stay explicit, and found items are collapsed.
+The optional pipeline inspector includes three real-control exercises with expected
+observations, restoration steps and interview prompts. Self-reported progress is
+in-memory and explicitly distinguished from test evidence. No fault is injected,
+provider switched or service stopped by opening or checking the guide.

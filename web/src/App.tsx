@@ -6,6 +6,7 @@ import { MAX_MESSAGE_LENGTH, mergeTranscript, validMessage, workspaceState, type
 import { useStudio } from './useStudio';
 import { useStudioAgent } from './useStudioAgent';
 import { StudioSettings } from './StudioSettings';
+import { LearningLab } from './LearningLab';
 import { SetupGuide } from './SetupGuide';
 import { ConversationPanelState } from './components/conversation-panel-state';
 import { StudioCommands } from './components/studio-commands';
@@ -53,6 +54,7 @@ function Pipeline({ status: lastStatus, online, connection, agentState, roomName
       <p>Studio starts one local agent process for your room. A managed agent server instead receives dispatched jobs.</p>
       <a href="https://docs.livekit.io/transport/data/rpc/" target="_blank" rel="noreferrer">Explore LiveKit RPC ↗</a>
     </details>
+    <LearningLab />
     <ol className="pipeline">
       <li><span className="stage-number">1</span><div><h3>Listen</h3><p>{speechProvider}</p><span>Speech → text · {status?.stt ? status.stt.local ? 'Local' : 'Cloud' : 'Location not reported'}</span></div></li>
       <li><span className="stage-number">2</span><div><h3>Reason</h3><p>{provider} · {status?.ai.model || 'Model not reported'}</p><span>Text → response · {status?.ai.local === true ? 'Local model' : status?.ai.local === false ? 'Remote model' : 'Location not reported'}{status?.ai.effort && status.ai.effort !== 'none' ? ` · ${status.ai.effort} effort` : ''}</span></div></li>

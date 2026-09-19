@@ -158,6 +158,8 @@ For source-release contents and license boundaries, see [release preparation](do
 **First conversation guide** shows local setup checks and the next steps.
 **Check microphone** offers an eight-second browser-only recording and replay.
 **How it works** reveals the connection, pipeline, and actual measured timings.
+**Practice troubleshooting** guides three break-and-fix exercises, with recovery
+steps and interview prompts. Start with the [learning guide](docs/learn-livekit.md#an-interview-walkthrough).
 Start with [hands-on exercises](docs/learn-livekit.md), then use the separate
 [cloud learning example](docs/cloud-learning.md) to explore named agent dispatch.
 The cloud example uses stock voices and does not upload your private reference.

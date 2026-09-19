@@ -371,3 +371,11 @@ kbd { font-family: inherit; font-size: .6875rem; color: var(--muted); border: 1p
 :root[data-density=compact] .drawer-body { padding-block: 16px; }
 @media (max-width: 900px) { .app-header { flex-wrap: wrap; gap: 12px; padding-block: 12px; } .studio-nav { order: 3; flex-basis: 100%; justify-content: center; } }
 @media (max-width: 480px) { .theme-options { gap: 6px; } .theme-option { padding: 8px; } .drawer-tabs { padding-inline: 12px; } .drawer-tabs .button { padding-inline: 10px; } }
+
+.learning-lab select { width: 100%; margin: 8px 0 16px; padding: 10px; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 8px; }
+.learning-lab h3, .learning-lab h4 { font-size: .8125rem; margin: 16px 0 8px; }
+.learning-lab ol { padding-left: 20px; font-size: .8125rem; }
+.learning-lab li + li { margin-top: 12px; }
+.learning-lab label { font-size: .8125rem; }
+.lab-observed { display: flex; gap: 10px; align-items: start; padding: 12px 0; }
+.learning-lab { overflow-wrap: anywhere; }

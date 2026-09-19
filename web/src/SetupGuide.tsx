@@ -3,6 +3,26 @@ import { api, errorMessage, safeMessage } from './api';
 
 interface Check { id: string; status: 'pass' | 'missing' | 'unverified'; message: string; action: string }
 interface SetupReport { version: number; checks: Check[] }
+function validReport(value: unknown): value is SetupReport {
+  if (!value || typeof value !== 'object') return false;
+  const report = value as SetupReport;
+  if (report.version !== 1 || !Array.isArray(report.checks) || !report.checks.length || report.checks.length > 100) return false;
+  const ids = new Set<string>();
+  return report.checks.every(item => {
+    if (!item || typeof item.id !== 'string' || !item.id || ids.has(item.id) ||
+      !['pass', 'missing', 'unverified'].includes(item.status) ||
+      typeof item.message !== 'string' || !item.message.trim() || typeof item.action !== 'string') return false;
+    ids.add(item.id); return true;
+  });
+}
+
+function Checks({ checks }: { checks: Check[] }) {
+  if (!checks.length) return null;
+  return <ul className="setup-checks">{checks.map(item => <li key={item.id}>
+    <span className={`check-state check-${item.status}`}>{labels[item.status]}</span>
+    <div><p>{safeMessage(item.message, 'Check local configuration.')}</p>{item.action && <p className="field-help">{safeMessage(item.action, 'See the first-run guide.')}</p>}</div>
+  </li>)}</ul>;
+}
 const labels = { pass: 'Found', missing: 'Needs setup', unverified: 'Not tested' };
 
 export function SetupGuide({ disabled = false, onVoices, onSettings }: { disabled?: boolean; onVoices: () => void; onSettings: () => void }) {
@@ -17,7 +37,7 @@ export function SetupGuide({ disabled = false, onVoices, onSettings }: { disable
     setLoading(true); setError(null); setReport(null);
     try {
       const result = await api<SetupReport>('setup');
-      if (result.version !== 1 || !Array.isArray(result.checks) || result.checks.some(item => !item || !['pass', 'missing', 'unverified'].includes(item.status))) throw new Error('Invalid report');
+      if (!validReport(result)) throw new Error('Invalid report');
       if (generation.current === id) setReport(result);
     } catch (cause) {
       if (generation.current === id) setError(errorMessage(cause, 'Setup checks could not be read. Check the local server and try again.'));
@@ -37,10 +57,17 @@ export function SetupGuide({ disabled = false, onVoices, onSettings }: { disable
           <button className="button secondary" disabled={loading} onClick={() => void check()}>{loading ? 'Checking…' : 'Check again'}</button>
           {loading && <p role="status">Checking local setup…</p>}
           {error && <p className="notice error" role="alert">{error}</p>}
-          {report && <ul className="setup-checks">{report.checks.map(item => <li key={item.id}>
-            <span className={`check-state check-${item.status}`}>{labels[item.status]}</span>
-            <div><p>{safeMessage(item.message, 'Check local configuration.')}</p>{item.action && <p className="field-help">{safeMessage(item.action, 'See the first-run guide.')}</p>}</div>
-          </li>)}</ul>}
+          {report && <>
+            <p role="status">{report.checks.some(item => item.status === 'missing')
+              ? `${report.checks.filter(item => item.status === 'missing').length} item${report.checks.filter(item => item.status === 'missing').length === 1 ? '' : 's'} need${report.checks.filter(item => item.status === 'missing').length === 1 ? 's' : ''} setup. Follow the actions below.`
+              : 'Configuration found. Next, try an audition and a typed conversation.'}</p>
+            <Checks checks={report.checks.filter(item => item.status === 'missing')} />
+            <Checks checks={report.checks.filter(item => item.status === 'unverified')} />
+            {report.checks.some(item => item.status === 'pass') && <details>
+              <summary>Found on this computer ({report.checks.filter(item => item.status === 'pass').length})</summary>
+              <Checks checks={report.checks.filter(item => item.status === 'pass')} />
+            </details>}
+          </>}
           <a href="https://github.com/c-mongan/livekit-voice-studio/blob/main/docs/quickstart.md" target="_blank" rel="noreferrer">Open the installation guide ↗</a>
         </li>
         <li><h3>Record and hear your voice</h3><p>Record a short passage, check its words, then generate a new sample. With the local speech model installed, you can do this without a LiveKit or AI account.</p>

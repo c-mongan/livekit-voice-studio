@@ -167,3 +167,19 @@ To compare turn-taking, set `VOICEBOX_TURN_DETECTION=audio-local` in your privat
 `.env` and restart Studio after ending your session. This selects LiveKit’s bundled
 CPU audio turn detector. Keep `vad` to retain the existing behavior. Judge pauses
 and interruptions on your microphone; a configured detector is not quality proof.
+
+## If the first attempt fails
+
+Use the smallest check that isolates the problem:
+
+| Last working step | Next check |
+| --- | --- |
+| Page will not open | `./studio status`; start the installed checkout if stopped. An unmanaged listener is another process, not permission to kill it. |
+| Page opens, setup has missing items | Follow **First conversation guide** actions; Found checks are collapsed. Empty or malformed responses are errors, never a pass. |
+| Voice records but audition fails | Local Qwen installation, reference transcript and available resources. LiveKit and an LLM are not needed for audition. |
+| Audition works but conversation fails | Selected LiveKit server and reasoning endpoint, then worker readiness. Do not repeatedly start sessions while one is draining. |
+| Typed reply works but speech does not | Microphone permission, track publication and recognizer; use **Check microphone** for browser-only replay. |
+| Reply text arrives but no sound | Playback permission, selected output device and agent audio track; inspect the pipeline before blaming synthesis. |
+
+After a repair, repeat the failed step and one follow-up. A green configuration
+check does not establish a working conversation. See [break-and-fix practice](learn-livekit.md#a-repeatable-break-and-fix-practice).
