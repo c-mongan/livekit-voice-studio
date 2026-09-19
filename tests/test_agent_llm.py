@@ -666,3 +666,27 @@ async def test_codex_thread_settings_must_match_verified_profile(change):
     with pytest.raises(APIError):
         await client.create_session(model="gpt-5.6-luna", reasoning_effort="low")
     assert client.session is None
+
+
+async def test_catalog_lists_models_without_creating_conversation(runtime):
+    adapter = AgentLLM(provider="copilot")
+    try:
+        assert await adapter.available_models() == [
+            {"id": "gpt-5.6-luna", "efforts": ["low", "medium"]}
+        ]
+        runtime.client.create_session.assert_not_awaited()
+    finally:
+        await adapter.aclose()
+    runtime.client.stop.assert_awaited()
+
+
+async def test_catalog_cannot_replace_an_existing_conversation(runtime):
+    adapter = AgentLLM(provider="copilot")
+    try:
+        await adapter.validate()
+        with pytest.raises(APIError, match="fresh adapter"):
+            await adapter.available_models()
+        runtime.client.start.assert_awaited_once()
+        runtime.client.stop.assert_not_awaited()
+    finally:
+        await adapter.aclose()

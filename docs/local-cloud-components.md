@@ -64,7 +64,9 @@ The default model is a starting point for a 16 GB Apple Silicon Mac, not a claim
 that it matches a larger cloud model. Its download is about 1.4 GB; runtime memory
 also includes the context cache and all other speech models.
 
-Choose **Ollama** in Settings. Enter the installed model name and the local API
+Choose **Ollama** in Settings. Pick an **Installed model**, or use **Enter name
+manually**. **Refresh models** reads the selected server without downloading or
+loading a model. Use **Advanced connection** to change the local API
 address, normally `http://127.0.0.1:11434/v1`. Ollama connections in this option must
 be loopback addresses. Use a different port if you deliberately run another local
 instance. Studio checks the selected model at session startup; an embedding model
