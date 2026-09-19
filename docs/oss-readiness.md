@@ -1,3 +1,5 @@
+> Latest evidence: [2026-09-19 clean installation and reliability check](validation-2026-09-19.md). Older counts and timings below are historical.
+
 # Standalone voice validation — 14 September 2026
 
 ## Decision

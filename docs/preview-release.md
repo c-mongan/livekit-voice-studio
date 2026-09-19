@@ -2,28 +2,24 @@
 
 ## What works in the tested setup
 
-Standalone Studio on Apple Silicon uses local Nemotron recognition and local Qwen
-speech synthesis, with configured LiveKit transport and Copilot reasoning. Users
-record an authorized voice, audition generated speech, and choose text or microphone
-input. Codex reasoning was separately checked in its documented restricted mode;
-this is not a claim that every provider supports the full spoken pipeline equally.
+Standalone Studio supports independent local or configured LiveKit transport and
+local Ollama or selected remote reasoning, with local Nemotron recognition and
+Qwen synthesis on the tested Mac. Users can record an authorized voice, audition
+new speech and choose text or microphone input.
 
-Recent synthetic live checks cover complete replies, a spoken interruption with a
-correct follow-up, 20 seconds of idle input, and five turns with pauses. The latest
-five-turn run took 3.019–4.226 seconds from speech end to nonzero remote audio,
-median 3.288 seconds. These are small samples, not a latency guarantee.
-
-Startup stages and safe diagnostic timing are visible through the local service.
-No timeout, interruption threshold, or cleanup ownership check was weakened.
+Prior synthetic tests exercised local/cloud combinations, interruption and
+follow-ups. A newer all-local run reported a full input buffer under high
+memory pressure before its first reply. This remains a developer preview with
+an unresolved reliability issue; no single successful run is a latency guarantee.
+See the [current validation record](validation-2026-09-19.md) and
+[earlier component evidence](superpowers/verification-2026-09-19-components.md).
 
 ## Release checks
 
-The offline suite has 477 tests. The frontend has 167 tests. Python 3.11–3.13 and
-frontend checks passed hosted CI before the latest security update; final CI must
-also pass for the release commit. The test runner is updated to pytest 9.0.3 and
-pytest-asyncio 1.4.0 to resolve [GHSA-6w46-j5rx-g56g](https://github.com/advisories/GHSA-6w46-j5rx-g56g).
-CI now checks known Python and npm dependency advisories. The unpublished project
-itself has no PyPI advisory record; code review/tests are still necessary.
+The merged PR #4 revision passed hosted Python 3.11–3.13 and frontend CI. A fresh
+clone on the maintainer's Mac passed 540 offline Python tests, 216 frontend tests
+and the production build. CI checks known Python and npm dependency advisories.
+An independent user's complete installation and human listening remain unverified.
 
 Use docs/releasing.md for source/package boundaries. The Studio source archive
 includes no credentials, voices, model weights, or installed dependencies. The

@@ -1,62 +1,63 @@
-# Tomorrow's demo
+# A two-minute Studio walkthrough
 
-## Before showing it
+This is a demo script for the real application, not a prerecorded performance
+claim. Prepare an authorized voice and installed models using the quickstart.
+Use ordinary test text. Keep private voice names, settings, tokens and unrelated
+browser tabs out of any recording. Do not show terminal logs on screen.
 
-1. Run `uv run --no-sync python -m examples.studio --check`.
-2. Start `./studio start --open`; the command should finish with a running status.
-3. Open `http://127.0.0.1:8765`.
-4. In Settings, use **Nemotron + Copilot Luna low** for the default demo.
-5. Start the session before speaking; the first connection prepares the model
-   and voice. Keep other local model jobs stopped.
+| Time (approximate) | Show | Explain |
+| --- | --- | --- |
+| 0:00–0:20 | Conversation route, with all four components local | “LiveKit connects the browser and agent. Recognition, reasoning and voice generation are separate choices.” |
+| 0:20–0:50 | Start a session with the microphone off; type “What does LiveKit do? One sentence.” | “Text skips recognition. The reply still becomes generated speech.” Allow real startup time; do not disguise it with editing. |
+| 0:50–1:15 | Request a longer answer, press Stop reply, then ask a short follow-up | “Stopping audio and safely cancelling generation are different. The successful next turn checks recovery.” |
+| 1:15–1:40 | How it works: room state and measured latency | “These measurements have different clocks. I don’t add them into a made-up total.” |
+| 1:40–2:00 | Practice troubleshooting; End session | “The project teaches failure isolation. It is a developer preview, with hardware and recognition limitations documented.” |
 
-Voicebox itself can remain closed. Do not run the old standalone worker
-alongside Studio. Model downloads and native builds are separate setup steps,
-not part of the live demonstration.
-Use `./studio stop` when finished, not the Stop control on an old Copilot command card.
+If a reply fails, show the failure honestly and use the troubleshooting guide.
+Do not switch to a remote provider during a private conversation to rescue a demo.
+The endpoint failure lesson is better as a separate, rehearsed demonstration.
 
-## A short, honest demonstration
+![Current Studio conversation view with local routing and an empty transcript](studio-local.jpg)
 
-1. Type a short question. Point out that the answer uses your locally selected
-   voice while the reasoning model is remote.
-2. Turn on the microphone and speak naturally. Nemotron transcribes on the CPU.
-3. Interrupt the answer, then ask a different question.
-4. End the session. Open Voices and show recording, exact transcript, naming and
-   generated audition. Make clear which control plays the reference and which
-   plays new synthesized words, then choose the voice.
-5. Optionally choose Codex Luna low. Read the restricted-agent disclosure and
-   explicitly acknowledge it; do not describe Codex as tool-free.
-6. Show Azure as an explicit alternative, not an automatic fallback.
+The screenshot was captured from the actual 1280×800 desktop UI, with no active
+session, microphone capture or private transcript. It illustrates the interface;
+it does not establish speech quality or disconnected operation.
 
-Only use your own voice or another voice with permission. Do not present a
-synthetic test recording as a person's clone.
+![Synthetic typed exchange after ending a local session](studio-reply.jpg)
 
-## What we can accurately claim
+This completed-session view shows a synthetic typed prompt and reply. Server
+metrics confirmed speech generation; this screenshot is not an audio-quality test.
+See the [validation record](validation-2026-09-19.md) for results and limitations.
 
-- Recording uses a real browser AudioWorklet and saves a private local WAV.
-- The selected model and reasoning effort are checked against the runtime.
-- Copilot has zero initialized tools; Codex uses a verified restricted workspace
-  and disables external capabilities, with trusted global instructions disclosed.
-- Local Nemotron and local Qwen work together with either agent backend.
-- Five synthetic-spoken turns with local VAD and no speculative reasoning received
-  response audio in **3.18 s median**, **3.63 s slowest observed**, using Copilot.
-- This is one repeated synthetic phrase in one room on one M4 Mac, not a provider
-  ranking, accent assessment or p90 benchmark.
-- No voice reference is uploaded to the LLM, but recognized conversation text
-  goes to the reasoning provider and LiveKit carries conversation media.
+## First independent tester
 
-## What still needs listening
+Ask a tester with an Apple Silicon Mac to follow [the first-run guide](quickstart.md)
+without borrowing your configuration or voice library. They should use their own
+authorized voice and record the first step that needed help. Success means:
 
-Do not claim perfect accent accuracy, exact voice identity, seamless human
-turn-taking, or identical speed on every PC. The controlled spoken tests used
-an installed stock synthetic voice so they could be reproduced without recording
-someone. Human accent, microphone, room noise and voice likeness need user testing.
+1. Install from the public repository and understand expected missing setup checks.
+2. Record a reference, hear a newly generated audition and distinguish the two.
+3. Start a typed conversation, then deliberately enable speech input.
+4. Stop a reply, get a follow-up, end the session and return to Ready.
+5. Explain which selected components are local and which would send data remotely.
 
-## If something fails
+Capture OS/chip/RAM, commit, selected component names, the failing step and a
+redacted error. Do not attach credentials, voice references, model files or private
+conversation transcripts. A failed step is useful feedback, not a failed tester.
 
-- Check the exact error rather than repeatedly starting rooms.
-- End the session and wait for drain before changing providers.
-- Never clear an unresolved-work marker based only on a healthy HTTP endpoint.
-- Do not enable unrestricted Codex, public tunnels, or silent cloud STT fallback
-  to make the demonstration appear successful.
-- Keep the existing configured Azure option available, and say explicitly when
-  you switch to it.
+## Preparation and failure recovery
+
+Run `./studio status` and use `./studio start --open` if the installed checkout is
+stopped. Do not run a second standalone worker alongside Studio. Downloads and
+native builds belong before the demonstration. Use `./studio stop` when you want
+to shut down the managed server; ending a conversation leaves the app running.
+
+You can demonstrate recording and audition separately: show the exact reference
+transcript and explain which control plays the original and which generates new
+words. Never present a stock synthetic test fixture as a person's cloned voice.
+For Codex, keep the restricted-agent disclosure explicit; it is not tool-free mode.
+
+On failure, end the session and wait for cleanup before changing providers. Never
+clear an unresolved-work marker merely because a health check responds. Do not
+use public tunnels or silent cloud fallback to rescue the demonstration. Human
+accent, room noise, speaker likeness and natural interruption still need listening.
