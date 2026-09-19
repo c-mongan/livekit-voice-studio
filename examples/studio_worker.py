@@ -64,6 +64,11 @@ def local_speech_error(error: Any) -> str:
             "Local speech connection closed unexpectedly. End the session and retry."
         ),
     }
+    for phase in ("connection", "handshake", "streaming", "audio send", "finalization"):
+        messages[f"Nemotron input buffer overloaded during {phase}"] = (
+            f"Local speech input buffer filled up during {phase}. "
+            "End the session and reduce system load."
+        )
     reason = getattr(error, "message", None)
     if isinstance(reason, str) and reason in messages:
         return messages[reason]

@@ -259,7 +259,7 @@ async def test_input_queue_is_bounded_before_connect(native: tuple[NativeServer,
         stream = provider.stream()
         stream.push_frame(frame())
         stream.push_frame(frame())
-        with pytest.raises(BufferError, match="buffer"):
+        with pytest.raises(BufferError, match="during connection"):
             stream.push_frame(frame())
         assert stream.buffered_audio_bytes <= 1280
         await stream.aclose()
@@ -590,3 +590,59 @@ async def test_public_vad_commit_only_flushes_provider_owned_streams(
         calls.clear()
         second.commit_utterance()
         assert calls == ["second"]
+
+
+async def test_overload_reports_finalization_phase(native: tuple[NativeServer, str]) -> None:
+    runtime, url = native
+    runtime.release_commit.clear()
+    async with NemotronSTT(base_url=url, max_buffer_seconds=0.04) as provider:
+        stream = provider.stream()
+        try:
+            stream.push_frame(frame())
+            await asyncio.wait_for(runtime.audio_received.wait(), 1)
+            stream.flush()
+            await asyncio.wait_for(runtime.commit_received.wait(), 1)
+            stream.push_frame(frame())
+            stream.push_frame(frame())
+            with pytest.raises(BufferError, match="during finalization"):
+                stream.push_frame(frame())
+            with pytest.raises(APIConnectionError, match="during finalization"):
+                await collect(stream)
+            assert stream.buffered_audio_bytes <= 1280
+        finally:
+            runtime.release_commit.set()
+            await stream.aclose()
+
+
+async def test_retry_resets_overload_phase_to_connection(server: Any) -> None:
+    attempts = 0
+    reconnecting = asyncio.Event()
+    release = asyncio.Event()
+
+    async def handle(request: web.Request) -> web.StreamResponse:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            ws = web.WebSocketResponse()
+            await ws.prepare(request)
+            # Never send session.created: the first attempt times out in handshake.
+            await release.wait()
+            return ws
+        reconnecting.set()
+        await release.wait()
+        return web.Response(status=503)
+
+    url = await server(handle)
+    async with NemotronSTT(base_url=url, max_buffer_seconds=0.04) as provider:
+        stream = provider.stream(
+            conn_options=APIConnectOptions(max_retry=1, timeout=0.1, retry_interval=0)
+        )
+        try:
+            await asyncio.wait_for(reconnecting.wait(), 2)
+            stream.push_frame(frame())
+            stream.push_frame(frame())
+            with pytest.raises(BufferError, match="during connection"):
+                stream.push_frame(frame())
+        finally:
+            release.set()
+            await stream.aclose()

@@ -215,6 +215,8 @@ class NemotronSpeechStream(stt.SpeechStream):
         self._commit_pending = False
         self._output_pending = 0
         self._overloaded = asyncio.Event()
+        self._phase = "connection"
+        self._overload_phase: str | None = None
 
     @property
     def buffered_audio_bytes(self) -> int:
@@ -236,15 +238,24 @@ class NemotronSpeechStream(stt.SpeechStream):
         try:
             super().push_frame(frame)
         except BufferError:
-            self._overloaded.set()
-            raise
+            self._record_overload()
+            raise BufferError(self._overload_message()) from None
 
     def flush(self) -> None:
         try:
             super().flush()
         except BufferError:
-            self._overloaded.set()
-            raise
+            self._record_overload()
+            raise BufferError(self._overload_message()) from None
+
+    def _record_overload(self) -> None:
+        # Freeze the first failure phase even if a pending send later completes.
+        if self._overload_phase is None:
+            self._overload_phase = self._phase
+        self._overloaded.set()
+
+    def _overload_message(self) -> str:
+        return f"Nemotron input buffer overloaded during {self._overload_phase or self._phase}"
 
     def _emit(self, event: stt.SpeechEvent) -> None:
         if self._output_pending >= 128:
@@ -275,6 +286,7 @@ class NemotronSpeechStream(stt.SpeechStream):
         return data
 
     async def _run(self) -> None:
+        self._phase = "connection"
         tasks: list[asyncio.Task[None]] = []
         trace = aiohttp.TraceConfig()
 
@@ -305,6 +317,7 @@ class NemotronSpeechStream(stt.SpeechStream):
                 ) as ws,
             ):
                 self._ws = ws
+                self._phase = "handshake"
                 async with asyncio.timeout(self._conn_options.timeout):
                     created = await self._message(ws)
                     if created["type"] != "session.created":
@@ -328,6 +341,7 @@ class NemotronSpeechStream(stt.SpeechStream):
                         raise APIConnectionError(
                             "Invalid Nemotron session handshake", retryable=False
                         )
+                self._phase = "streaming"
                 sender = asyncio.create_task(self._send(ws))
                 receiver = asyncio.create_task(self._receive(ws))
                 overload = asyncio.create_task(self._wait_overload())
@@ -352,13 +366,13 @@ class NemotronSpeechStream(stt.SpeechStream):
 
     async def _wait_overload(self) -> None:
         await self._overloaded.wait()
-        raise APIConnectionError("Nemotron input buffer overloaded", retryable=False)
+        raise APIConnectionError(self._overload_message(), retryable=False)
 
     async def _send(self, ws: aiohttp.ClientWebSocketResponse) -> None:
         audio_bytes = 0
         async for item in self._input_ch:
             if self._overloaded.is_set():
-                raise APIConnectionError("Nemotron input buffer overloaded", retryable=False)
+                raise APIConnectionError(self._overload_message(), retryable=False)
             if isinstance(item, rtc.AudioFrame):
                 self._sent_audio = True
                 pcm = bytes(item.data)
@@ -367,15 +381,19 @@ class NemotronSpeechStream(stt.SpeechStream):
                     samples.byteswap()
                     pcm = samples.tobytes()
                 async with asyncio.timeout(self._conn_options.timeout):
+                    self._phase = "audio send"
                     await ws.send_bytes(pcm)
+                    self._phase = "streaming"
                 audio_bytes += len(pcm)
             elif audio_bytes:
+                self._phase = "finalization"
                 self._committed.clear()
                 self._commit_pending = True
                 try:
                     async with asyncio.timeout(self._provider.finalize_timeout):
                         await ws.send_json({"type": "input_audio_buffer.commit"})
                         await self._committed.wait()
+                        self._phase = "streaming"
                 except TimeoutError:
                     raise APITimeoutError(
                         "Nemotron finalization timed out", retryable=False
