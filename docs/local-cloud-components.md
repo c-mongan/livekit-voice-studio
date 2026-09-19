@@ -26,7 +26,7 @@ brew install livekit
 livekit-server --dev --bind 127.0.0.1
 ```
 
-In **Settings → Providers**, choose the local LiveKit option. Studio uses
+In **Settings → Connection & AI**, choose the local LiveKit option. Studio uses
 `ws://127.0.0.1:7880` and LiveKit's public development credentials (`devkey` /
 `secret`). They are for same-machine development only. Keep this terminal running;
 Ctrl-C stops the server. The Studio server and LiveKit server are separate processes.

@@ -14,6 +14,11 @@ from livekit.agents import Agent, AgentServer, AgentSession, JobContext, JobRequ
 from livekit.plugins import openai, silero, voicebox
 from livekit.plugins.voicebox.errors import VoiceboxError
 
+# Direct script execution puts examples/, not the checkout root, on sys.path.
+# Preserve the documented CLI and its lazy package imports without PYTHONPATH.
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 from examples.component_endpoints import DEFAULT_LLM_URL, ENDPOINT_PROVIDERS, validate_endpoint
 
 server = AgentServer(host="127.0.0.1")

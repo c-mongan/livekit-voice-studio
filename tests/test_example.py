@@ -189,3 +189,22 @@ async def test_room_start_disables_recording_and_uses_local_vad(monkeypatch):
     assert session.start.call_args.kwargs["record"] is False
     assert construct.call_args.kwargs["turn_handling"]["interruption"]["mode"] == "vad"
     session.say.assert_awaited_once()
+
+
+def test_direct_example_cli_help_without_pythonpath(tmp_path):
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    script = Path(__file__).resolve().parents[1] / "examples" / "minimal_agent.py"
+    result = subprocess.run(
+        [sys.executable, "-E", str(script), "--help"],
+        cwd=tmp_path,
+        env={key: value for key, value in os.environ.items() if key != "PYTHONPATH"},
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "Usage:" in result.stdout

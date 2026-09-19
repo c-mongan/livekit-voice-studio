@@ -32,3 +32,26 @@ The earlier intermittent recognition/startup failures remain unresolved. No new
 claims of offline certification, fresh-user installation, production reliability,
 physical microphone quality or Cloud deployment are made. See the component
 verification record for prior explicitly scoped live integration evidence.
+
+## PR review follow-up
+
+The GitHub direct-script smoke check exposed a real import failure: Python puts
+`examples/`, rather than the checkout root, on `sys.path` when executing
+`examples/minimal_agent.py`. The direct-script entry now adds its own checkout
+root, preserving both script and module entry points. A subprocess regression
+runs from an unrelated directory with Python environment overrides ignored; it
+failed before the fix and passed afterward.
+
+The two Copilot inline comments at PR4 discussions 4053829671 and 4053829679
+suggested that saved cloud `low` effort was rejected by endpoint validation.
+Reproduction did not support that claim: the validator receives its default
+`none`, while saved cloud effort is checked separately against the provider
+preset. Four additional regression cases passed before any validator changes;
+they cover cloud save/reload, legacy field migration and doctor's saved environment,
+including preserved effort. No validator behavior was changed.
+
+Agent quickstart and preview notes now describe local defaults and optional remote
+services consistently; the component guide uses the current Connection & AI label.
+Full Python suite: 540 passed, 5 integration tests deselected. Ruff, formatting,
+mypy and diff checks passed. Independent review found no actionable issues and
+reran 31 targeted tests. Frontend and live inference were unchanged and not rerun.

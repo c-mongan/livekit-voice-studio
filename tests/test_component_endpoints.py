@@ -210,3 +210,33 @@ async def test_chat_redirect_never_forwards_prompt_or_key(server):
     finally:
         await model.aclose()
     assert not forwarded
+
+
+@pytest.mark.parametrize("provider", ["copilot", "codex", "azure", "openai"])
+def test_cloud_presets_save_reload_and_doctor_preserve_effort(tmp_path, provider):
+    from examples.studio_library import PRESETS
+    from tools.studio_doctor import _saved_environment
+
+    library = StudioLibrary(tmp_path / "library")
+    model, effort = PRESETS[provider]
+    library.update_settings(
+        {
+            "llmProvider": provider,
+            "llmModel": model,
+            "reasoningEffort": effort,
+            "codexRestrictedApproved": provider == "codex",
+            "livekitMode": "configured",
+        }
+    )
+    settings = library.settings()
+    assert settings["reasoningEffort"] == effort
+    # Exercise legacy files without the new endpoint and transport fields too.
+    del settings["llmBaseUrl"]
+    del settings["livekitMode"]
+    library.settings_path.write_text(json.dumps(settings))
+    assert library.settings()["reasoningEffort"] == effort
+    env = {"VOICEBOX_LIBRARY_DIR": str(library.root)}
+    assert _saved_environment(tmp_path, env)
+    assert env["VOICEBOX_LLM_PROVIDER"] == provider
+    assert env["VOICEBOX_LLM_MODEL"] == model
+    assert env["VOICEBOX_REASONING_EFFORT"] == effort
