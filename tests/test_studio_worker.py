@@ -169,3 +169,17 @@ def test_local_speech_diagnostic_explains_known_failure_without_leaking_payload(
     )
     assert "private" not in message and "secret" not in message
     assert message == studio_worker.local_speech_error(RuntimeError("secret"))
+
+
+def test_local_speech_phase_diagnostic_is_allowlisted():
+    from livekit.agents import APIConnectionError
+
+    for phase in ("connection", "handshake", "streaming", "audio send", "finalization"):
+        message = studio_worker.local_speech_error(
+            APIConnectionError(f"Nemotron input buffer overloaded during {phase}")
+        )
+        assert phase in message and "buffer" in message
+    unknown = studio_worker.local_speech_error(
+        APIConnectionError("Nemotron input buffer overloaded during PRIVATE TRANSCRIPT")
+    )
+    assert "PRIVATE" not in unknown

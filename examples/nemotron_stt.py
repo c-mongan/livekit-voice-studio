@@ -56,9 +56,23 @@ def _local_url(value: str) -> str:
 
 class _AudioChannel(utils.aio.Chan[rtc.AudioFrame | stt.SpeechStream._FlushSentinel]):
     def __init__(self, byte_limit: int) -> None:
-        super().__init__(maxsize=256)
+        super().__init__(maxsize=2048)
         self.byte_limit = byte_limit
+        self._base_limit = byte_limit
+        self._reserved = False
         self.audio_bytes = 0
+
+    def reserve_finalization(self, extra_bytes: int) -> None:
+        self._reserved = True
+        self.byte_limit = self._base_limit + extra_bytes
+
+    def release_finalization(self) -> None:
+        self._reserved = False
+        self._trim_limit()
+
+    def _trim_limit(self) -> None:
+        if not self._reserved and self.audio_bytes <= self._base_limit:
+            self.byte_limit = self._base_limit
 
     def send_nowait(self, value: rtc.AudioFrame | stt.SpeechStream._FlushSentinel) -> None:
         size = len(value.data) * 2 if isinstance(value, rtc.AudioFrame) else 0
@@ -71,13 +85,17 @@ class _AudioChannel(utils.aio.Chan[rtc.AudioFrame | stt.SpeechStream._FlushSenti
         value = super().recv_nowait()
         if isinstance(value, rtc.AudioFrame):
             self.audio_bytes -= len(value.data) * 2
+            self._trim_limit()
         return value
 
 
 class NemotronSTT(stt.STT[Never]):
     """Streaming English recognition through a local native sidecar.
 
-    Audio is bounded to ``max_buffer_seconds`` plus one <=200ms in-flight frame.
+    Audio is normally bounded to ``max_buffer_seconds`` plus one <=200ms frame.
+    During commit, a bounded ``finalize_timeout`` seconds of extra audio can queue
+    while the native server finishes the previous utterance. The reserve drains
+    before the normal limit resumes; a separate 2048-item bound also applies.
     ``push_frame`` is synchronous, so overload is an explicit BufferError rather
     than silent audio loss. Stop/recreate the affected stream after overload.
     Retain normal LiveKit VAD turn detection and call ``commit_utterance()`` when
@@ -215,6 +233,8 @@ class NemotronSpeechStream(stt.SpeechStream):
         self._commit_pending = False
         self._output_pending = 0
         self._overloaded = asyncio.Event()
+        self._phase = "connection"
+        self._overload_phase: str | None = None
 
     @property
     def buffered_audio_bytes(self) -> int:
@@ -236,15 +256,24 @@ class NemotronSpeechStream(stt.SpeechStream):
         try:
             super().push_frame(frame)
         except BufferError:
-            self._overloaded.set()
-            raise
+            self._record_overload()
+            raise BufferError(self._overload_message()) from None
 
     def flush(self) -> None:
         try:
             super().flush()
         except BufferError:
-            self._overloaded.set()
-            raise
+            self._record_overload()
+            raise BufferError(self._overload_message()) from None
+
+    def _record_overload(self) -> None:
+        # Freeze the first failure phase even if a pending send later completes.
+        if self._overload_phase is None:
+            self._overload_phase = self._phase
+        self._overloaded.set()
+
+    def _overload_message(self) -> str:
+        return f"Nemotron input buffer overloaded during {self._overload_phase or self._phase}"
 
     def _emit(self, event: stt.SpeechEvent) -> None:
         if self._output_pending >= 128:
@@ -275,6 +304,7 @@ class NemotronSpeechStream(stt.SpeechStream):
         return data
 
     async def _run(self) -> None:
+        self._phase = "connection"
         tasks: list[asyncio.Task[None]] = []
         trace = aiohttp.TraceConfig()
 
@@ -305,6 +335,7 @@ class NemotronSpeechStream(stt.SpeechStream):
                 ) as ws,
             ):
                 self._ws = ws
+                self._phase = "handshake"
                 async with asyncio.timeout(self._conn_options.timeout):
                     created = await self._message(ws)
                     if created["type"] != "session.created":
@@ -328,6 +359,7 @@ class NemotronSpeechStream(stt.SpeechStream):
                         raise APIConnectionError(
                             "Invalid Nemotron session handshake", retryable=False
                         )
+                self._phase = "streaming"
                 sender = asyncio.create_task(self._send(ws))
                 receiver = asyncio.create_task(self._receive(ws))
                 overload = asyncio.create_task(self._wait_overload())
@@ -352,13 +384,13 @@ class NemotronSpeechStream(stt.SpeechStream):
 
     async def _wait_overload(self) -> None:
         await self._overloaded.wait()
-        raise APIConnectionError("Nemotron input buffer overloaded", retryable=False)
+        raise APIConnectionError(self._overload_message(), retryable=False)
 
     async def _send(self, ws: aiohttp.ClientWebSocketResponse) -> None:
         audio_bytes = 0
         async for item in self._input_ch:
             if self._overloaded.is_set():
-                raise APIConnectionError("Nemotron input buffer overloaded", retryable=False)
+                raise APIConnectionError(self._overload_message(), retryable=False)
             if isinstance(item, rtc.AudioFrame):
                 self._sent_audio = True
                 pcm = bytes(item.data)
@@ -367,19 +399,26 @@ class NemotronSpeechStream(stt.SpeechStream):
                     samples.byteswap()
                     pcm = samples.tobytes()
                 async with asyncio.timeout(self._conn_options.timeout):
+                    self._phase = "audio send"
                     await ws.send_bytes(pcm)
+                    self._phase = "streaming"
                 audio_bytes += len(pcm)
             elif audio_bytes:
+                self._phase = "finalization"
+                self._audio.reserve_finalization(int(self._provider.finalize_timeout * 32000))
                 self._committed.clear()
                 self._commit_pending = True
                 try:
                     async with asyncio.timeout(self._provider.finalize_timeout):
                         await ws.send_json({"type": "input_audio_buffer.commit"})
                         await self._committed.wait()
+                        self._phase = "streaming"
                 except TimeoutError:
                     raise APITimeoutError(
                         "Nemotron finalization timed out", retryable=False
                     ) from None
+                finally:
+                    self._audio.release_finalization()
                 self._emit(
                     stt.SpeechEvent(
                         type=stt.SpeechEventType.RECOGNITION_USAGE,
