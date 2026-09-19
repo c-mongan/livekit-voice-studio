@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, errorMessage, studioRequest, type LocalVoice, type StudioConfig, type StudioStatus, type VoiceLibrary } from './api';
+import { AppearanceSettings } from './components/appearance-settings';
 import { VoiceEnrollment } from './VoiceEnrollment';
 import { useVoiceAudition } from './useVoiceAudition';
 import { VoiceAudition } from './VoiceAudition';
@@ -20,7 +21,8 @@ const presets: Record<string, { model: string; effort: string }> = {
   azure: { model: 'gpt-4.1-nano', effort: '' }, openai: { model: 'gpt-4.1-mini', effort: '' },
 };
 
-export function StudioSettings({ locked, onChanged, status, onAuditionBusy, requestedTab, onRequestHandled, onOpen, onRoutingChanged }: {
+export function StudioSettings({ locked, onChanged, status, onAuditionBusy, requestedTab, onRequestHandled, onOpen, onRoutingChanged, hideTriggers = false, onMicCheck }: {
+  hideTriggers?: boolean; onMicCheck?: () => void;
   locked: boolean; onChanged: () => void | Promise<void>; status?: StudioStatus | null;
   onAuditionBusy?: (busy: boolean) => void;
   requestedTab?: 'providers' | 'voices' | null;
@@ -31,7 +33,7 @@ export function StudioSettings({ locked, onChanged, status, onAuditionBusy, requ
   const dialog = useRef<HTMLDialogElement>(null);
   const trigger = useRef<HTMLElement | null>(null);
   const [open, setOpen] = useState(false);
-  const [tab, setTab] = useState<'providers' | 'voices'>('voices');
+  const [tab, setTab] = useState<'providers' | 'voices' | 'audio' | 'appearance'>('voices');
   const [config, setConfig] = useState<StudioConfig | null>(null);
   const [library, setLibrary] = useState<VoiceLibrary | null>(null);
   const [loading, setLoading] = useState(false);
@@ -90,7 +92,7 @@ export function StudioSettings({ locked, onChanged, status, onAuditionBusy, requ
     catch (cause) { setError(errorMessage(cause, 'The change could not be saved. Check the local server and retry.')); }
     finally { inFlight.current = false; setBusy(false); }
   }
-  const switchTab = (next: 'providers' | 'voices') => { if (!enrolling) { audition.cancel(); setFocusedVoice(null); setTab(next); setPreview(null); setDeleting(null); } };
+  const switchTab = (next: 'providers' | 'voices' | 'audio' | 'appearance') => { if (!enrolling) { audition.cancel(); setFocusedVoice(null); setTab(next); setPreview(null); setDeleting(null); } };
   function openDrawer(next: 'providers' | 'voices', source: HTMLButtonElement) {
     onOpen?.();
     trigger.current = source;
@@ -98,22 +100,23 @@ export function StudioSettings({ locked, onChanged, status, onAuditionBusy, requ
     setOpen(true);
   }
   return <>
-    <div className="setup-entry">
+    {!hideTriggers && <div className="setup-entry">
       <button className="button secondary settings-trigger" aria-haspopup="dialog" onClick={(event) => openDrawer('voices', event.currentTarget)}>Voice library</button>
       <button className="button quiet settings-trigger" aria-haspopup="dialog" onClick={(event) => openDrawer('providers', event.currentTarget)}>Settings</button>
       {!locked && <span className="field-help">{audition.busy ? 'Local audition running · other changes paused' : 'Record → audition → choose → chat'}</span>}
-    </div>
+    </div>}
     <dialog className="settings-drawer" ref={dialog} aria-labelledby="settings-title" onCancel={(event) => { event.preventDefault(); close(); }}>
       {open && <>
         <header className="drawer-header"><div><h2 id="settings-title">Make it yours</h2><p>Choose where your conversation runs</p></div><button className="button quiet" disabled={busy} onClick={close} aria-label="Close settings">Close</button></header>
         <div className="drawer-tabs" role="tablist" aria-label="Studio configuration" onKeyDown={(event) => {
           if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key) && !enrolling) {
             event.preventDefault();
-            const next = event.key === 'Home' ? 'voices' : event.key === 'End' ? 'providers' : tab === 'providers' ? 'voices' : 'providers';
+            const tabs = ['voices', 'providers', 'audio', 'appearance'] as const;
+            const next = tabs[event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : (tabs.indexOf(tab) + (event.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length];
             switchTab(next); document.getElementById(`tab-${next}`)?.focus();
           }
         }}>
-          {(['voices', 'providers'] as const).map((value) => <button key={value} className="button quiet" id={`tab-${value}`} role="tab" aria-selected={tab === value} aria-controls={`panel-${value}`} tabIndex={tab === value ? 0 : -1} disabled={enrolling} onClick={() => switchTab(value)}>{value === 'providers' ? 'Connection & AI' : 'Voices'}</button>)}
+          {(['voices', 'providers', 'audio', 'appearance'] as const).map((value) => <button key={value} className="button quiet" id={`tab-${value}`} role="tab" aria-selected={tab === value} aria-controls={`panel-${value}`} tabIndex={tab === value ? 0 : -1} disabled={enrolling} onClick={() => switchTab(value)}>{value === 'providers' ? 'Connection & AI' : value === 'audio' ? 'Audio' : value === 'appearance' ? 'Appearance' : 'Voices'}</button>)}
         </div>
         <div className="drawer-body">
           {locked && <p className="notice warning">End the conversation and wait for cleanup before changing settings or recording a voice.</p>}
@@ -122,6 +125,8 @@ export function StudioSettings({ locked, onChanged, status, onAuditionBusy, requ
           {error && <div className="notice error" role="alert"><p>{error}</p><button className="button quiet" disabled={busy} onClick={() => void load()}>Retry</button></div>}
           {notice && <p className="save-notice" role="status">{notice}</p>}
           {loading && <p className="loading-line" role="status">Loading local configuration...</p>}
+          {tab === 'appearance' && <AppearanceSettings />}
+          {tab === 'audio' && <section role="tabpanel" id="panel-audio" aria-labelledby="tab-audio"><h3 className="drawer-section-title">Your microphone and voice</h3><p className="field-help">Microphone access starts only when you turn it on. You can always type instead.</p><div className="audio-settings-row"><h4>Microphone check</h4><p>Record and play back a short test before your conversation.</p>{onMicCheck && <button className="button secondary" disabled={locked} onClick={() => { close(); onMicCheck(); }}>Check microphone</button>}</div><div className="audio-settings-row"><h4>Speech recognition</h4><p>Choose local Nemotron or a configured cloud service.</p><button className="button secondary" onClick={() => switchTab('providers')}>Choose speech service</button></div><div className="audio-settings-row"><h4>Speaking voice</h4><p>Your cloned voice is generated locally with Qwen.</p><button className="button secondary" onClick={() => switchTab('voices')}>Choose speaking voice</button></div></section>}
           {tab === 'providers' && config && <section role="tabpanel" id="panel-providers" aria-labelledby="tab-providers">
             <h3 className="drawer-section-title">Your conversation setup</h3>
             <p className="field-help">Start local. Change individual components when you need cloud services. Changes apply to the next session.</p>

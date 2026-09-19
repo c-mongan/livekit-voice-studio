@@ -17,3 +17,23 @@
   --danger: oklch(.45 .16 25);
   --danger-soft: oklch(.97 .016 25);
 }
+
+/* Adapted from Document Processor's navy/cyan theme into shared Studio tokens. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --surface: oklch(.19 .025 255);
+  --surface-secondary: oklch(.235 .03 255);
+  --ink: oklch(.95 .008 245);
+  --muted: oklch(.74 .025 245);
+  --line: oklch(.34 .025 255);
+  --control-line: oklch(.5 .03 255);
+  --accent: oklch(.78 .12 215);
+  --accent-hover: oklch(.86 .10 215);
+  --accent-soft: oklch(.3 .045 230);
+  --meter-idle: oklch(.58 .03 245);
+  --success: oklch(.8 .12 160);
+  --warning: oklch(.83 .13 85);
+  --warning-soft: oklch(.3 .04 65);
+  --danger: oklch(.8 .12 25);
+  --danger-soft: oklch(.3 .04 25);
+}

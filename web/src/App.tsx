@@ -279,6 +279,7 @@ function Workspace({ studio, setMuted }: { studio: Studio; setMuted: (muted: boo
   return <div className="app-shell">
     <header className="app-header">
       <a className="brand" href="#conversation" aria-label="LiveKit Voice Studio, conversation"><span className="brand-mark"><Icon name="audio" /></span><span>LiveKit <span className="brand-secondary">Voice Studio</span></span></a>
+      <nav className="studio-nav" aria-label="Studio navigation"><button className="button quiet" aria-current={!learning ? 'page' : undefined} onClick={() => { setLearning(false); composer.current?.focus(); }}>Conversation</button><button className="button quiet" disabled={!canStart} onClick={() => setSettingsRequest('voices')}>Voice library</button><button className="button quiet" disabled={!canStart} onClick={() => setSettingsRequest('providers')}>Settings</button></nav>
       <span className="header-note"><span className={`connection-dot ${online ? 'online' : ''}`} />{online ? 'Local server connected' : 'Local server unavailable'}</span>
     </header>
     <main className={`studio-layout${learning ? '' : ' studio-simple'}`}>
@@ -329,7 +330,7 @@ function Workspace({ studio, setMuted }: { studio: Studio; setMuted: (muted: boo
           <button className="button quiet" aria-expanded={micCheck} disabled={!!grant || starting || auditionBusy} onClick={() => setMicCheck(!micCheck)}>{micCheck ? 'Close microphone check' : 'Check microphone'}</button>
         </div>
         {micCheck && !grant && !starting && !auditionBusy && <MicrophoneCheck disabled={ending} />}
-        <StudioSettings onOpen={() => setMicCheck(false)} requestedTab={settingsRequest} onRequestHandled={() => setSettingsRequest(null)} status={status} locked={!online || !!grant || starting || ending || (!auditionBusy && status?.phase !== 'idle')} onChanged={studio.refresh} onRoutingChanged={() => setConsent(false)} onAuditionBusy={setAuditionBusy} />
+        <StudioSettings hideTriggers onMicCheck={() => setMicCheck(true)} onOpen={() => setMicCheck(false)} requestedTab={settingsRequest} onRequestHandled={() => setSettingsRequest(null)} status={status} locked={!online || !!grant || starting || ending || (!auditionBusy && status?.phase !== 'idle')} onChanged={studio.refresh} onRoutingChanged={() => setConsent(false)} onAuditionBusy={setAuditionBusy} />
         {!grant && <SetupGuide disabled={!online || starting || ending || auditionBusy || status?.phase !== 'idle'} onVoices={() => { setMicCheck(false); setSettingsRequest('voices'); }} onSettings={() => { setMicCheck(false); setSettingsRequest('providers'); }} />}
         </div>
         <section className="conversation" aria-label="Conversation transcript">

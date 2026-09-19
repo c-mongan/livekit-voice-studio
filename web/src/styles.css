@@ -343,3 +343,31 @@ kbd { font-family: inherit; font-size: .6875rem; color: var(--muted); border: 1p
 @media (max-width: 1000px) { .workspace { height: auto; } .conversation { min-height: 360px; } }
 .studio-layout:not(.studio-simple) .workspace { height: auto; }
 .studio-layout:not(.studio-simple) .conversation { min-height: 360px; }
+
+.studio-nav { display: flex; gap: 4px; padding: 4px; background: var(--surface-secondary); border: 1px solid var(--line); border-radius: 10px; }
+.studio-nav [aria-current=page] { background: var(--accent-soft); color: var(--accent-hover); }
+.theme-options { border: 0; padding: 0; margin: 24px 0; display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 10px; }
+.theme-options legend { font-weight: 600; font-size: .875rem; margin-bottom: 12px; }
+.theme-option { cursor: pointer; border: 1px solid var(--control-line); border-radius: 10px; padding: 12px; display: grid; gap: 8px; font-size: .8125rem; }
+.theme-option:has(:checked) { border-color: var(--accent); background: var(--accent-soft); }
+.theme-option small, .appearance-toggle small { color: var(--muted); display: block; font-size: .75rem; }
+.theme-preview { height: 64px; border-radius: 5px; padding: 10px; display: grid; gap: 5px; background: #f1f5f9; border: 1px solid #94a3b8; }
+.theme-preview i { background: #94a3b8; border-radius: 2px; height: 5px; }
+.theme-dark .theme-preview { background: #0f172a; }
+.theme-dark .theme-preview i { background: #22d3ee; }
+.theme-system .theme-preview { background: linear-gradient(90deg,#f1f5f9 50%,#0f172a 50%); }
+.appearance-toggle { display: flex; align-items: center; justify-content: space-between; gap: 20px; border-block: 1px solid var(--line); padding: 20px 0; margin-bottom: 16px; }
+.appearance-toggle input { width: 20px; height: 20px; accent-color: var(--accent); }
+.audio-settings-row { padding: 18px 0; border-bottom: 1px solid var(--line); }
+.audio-settings-row h4 { margin: 0 0 6px; }
+.audio-settings-row p { color: var(--muted); font-size: .8125rem; margin-bottom: 12px; }
+.settings-drawer { width: min(640px,100%); }
+.drawer-tabs { gap: 4px; overflow-x: auto; }
+.drawer-tabs .button { white-space: nowrap; padding-inline: 12px; }
+:root[data-density=compact] .message { padding: 8px 12px; margin-block: 6px; }
+:root[data-density=compact] .studio-controls { padding: 14px; }
+:root[data-density=compact] .conversation-route { padding-block: 8px; }
+:root[data-density=compact] .route-components { gap: 6px; }
+:root[data-density=compact] .drawer-body { padding-block: 16px; }
+@media (max-width: 900px) { .app-header { flex-wrap: wrap; gap: 12px; padding-block: 12px; } .studio-nav { order: 3; flex-basis: 100%; justify-content: center; } }
+@media (max-width: 480px) { .theme-options { gap: 6px; } .theme-option { padding: 8px; } .drawer-tabs { padding-inline: 12px; } .drawer-tabs .button { padding-inline: 10px; } }

@@ -51,8 +51,8 @@ it('keeps provider settings directly accessible and returns focus to their own t
 it('orders voice-first tabs with keyboard navigation and a single tab stop', async () => {
   await click('Voice library');
   const tabs = host.querySelector('[role=tablist]')!;
-  expect([...tabs.querySelectorAll('[role=tab]')].map((tab) => tab.textContent)).toEqual(['Voices', 'Connection & AI']);
-  for (const [key, id] of [['End', 'providers'], ['Home', 'voices'], ['ArrowRight', 'providers'], ['ArrowLeft', 'voices']]) {
+  expect([...tabs.querySelectorAll('[role=tab]')].map((tab) => tab.textContent)).toEqual(['Voices', 'Connection & AI', 'Audio', 'Appearance']);
+  for (const [key, id] of [['End', 'appearance'], ['Home', 'voices'], ['ArrowRight', 'providers'], ['ArrowRight', 'audio'], ['ArrowRight', 'appearance'], ['ArrowRight', 'voices'], ['ArrowLeft', 'appearance']]) {
     await act(async () => tabs.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })));
     expect(document.activeElement?.id).toBe(`tab-${id}`);
     expect(tabs.querySelector('[aria-selected=true]')?.id).toBe(`tab-${id}`);
