@@ -16,7 +16,7 @@ from aiohttp import WSMsgType, web
 from livekit import rtc
 from livekit.agents import APIConnectionError, APIConnectOptions, APITimeoutError, stt
 
-from examples.nemotron_stt import NemotronSTT
+from examples.nemotron_stt import NemotronSTT, _AudioChannel
 
 PREFIX = "conversation.item.input_audio_transcription."
 
@@ -595,20 +595,20 @@ async def test_public_vad_commit_only_flushes_provider_owned_streams(
 async def test_overload_reports_finalization_phase(native: tuple[NativeServer, str]) -> None:
     runtime, url = native
     runtime.release_commit.clear()
-    async with NemotronSTT(base_url=url, max_buffer_seconds=0.04) as provider:
+    async with NemotronSTT(base_url=url, max_buffer_seconds=0.04, finalize_timeout=0.2) as provider:
         stream = provider.stream()
         try:
             stream.push_frame(frame())
             await asyncio.wait_for(runtime.audio_received.wait(), 1)
             stream.flush()
             await asyncio.wait_for(runtime.commit_received.wait(), 1)
-            stream.push_frame(frame())
-            stream.push_frame(frame())
+            for _ in range(12):
+                stream.push_frame(frame())
             with pytest.raises(BufferError, match="during finalization"):
                 stream.push_frame(frame())
             with pytest.raises(APIConnectionError, match="during finalization"):
                 await collect(stream)
-            assert stream.buffered_audio_bytes <= 1280
+            assert stream.buffered_audio_bytes <= 7680
         finally:
             runtime.release_commit.set()
             await stream.aclose()
@@ -646,3 +646,58 @@ async def test_retry_resets_overload_phase_to_connection(server: Any) -> None:
         finally:
             release.set()
             await stream.aclose()
+
+
+async def test_finalization_retains_next_audio_within_deadline_budget(
+    native: tuple[NativeServer, str],
+) -> None:
+    runtime, url = native
+    runtime.release_commit.clear()
+    async with NemotronSTT(base_url=url, max_buffer_seconds=0.04, finalize_timeout=0.2) as provider:
+        stream = provider.stream()
+        try:
+            stream.push_frame(frame())
+            await asyncio.wait_for(runtime.audio_received.wait(), 1)
+            stream.flush()
+            await asyncio.wait_for(runtime.commit_received.wait(), 1)
+            # Audio continues during commit processing; it must not be lost or
+            # sent into the preceding utterance before its acknowledgement.
+            for _ in range(5):
+                stream.push_frame(frame())
+            assert len(runtime.audio) == 1
+            stream.end_input()
+            runtime.release_commit.set()
+            events = await collect(stream)
+            assert len(runtime.audio) == 6
+            assert sum(e.type == stt.SpeechEventType.FINAL_TRANSCRIPT for e in events) == 2
+            assert stream._audio.byte_limit == provider.max_buffer_bytes
+        finally:
+            runtime.release_commit.set()
+            await stream.aclose()
+
+
+async def test_finalization_reserve_shrinks_only_after_backlog_drains() -> None:
+    channel = _AudioChannel(1280)
+    channel.reserve_finalization(6400)
+    for _ in range(4):
+        channel.send_nowait(frame())
+    channel.release_finalization()
+    assert channel.byte_limit == 7680
+    channel.recv_nowait()
+    assert channel.audio_bytes == 1920 and channel.byte_limit == 7680
+    channel.recv_nowait()
+    assert channel.audio_bytes == 1280 and channel.byte_limit == 1280
+    with pytest.raises(BufferError):
+        channel.send_nowait(frame())
+    channel.recv_nowait()
+    channel.send_nowait(frame())
+    assert channel.audio_bytes == 1280
+
+
+async def test_small_frames_still_obey_item_bound() -> None:
+    channel = _AudioChannel(100000)
+    for _ in range(2048):
+        channel.send_nowait(frame(milliseconds=1))
+    assert channel.audio_bytes < channel.byte_limit
+    with pytest.raises(BufferError):
+        channel.send_nowait(frame(milliseconds=1))
