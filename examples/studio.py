@@ -1247,7 +1247,10 @@ def main() -> None:
     parser.add_argument(
         "--confirm-backend-restarted",
         action="store_true",
-        help="Clear unresolved-work marker ONLY after confirming Voicebox has stopped/restarted.",
+        help=(
+            "Clear unresolved-work marker ONLY after confirming the synthesis backend "
+            "and workers stopped/restarted."
+        ),
     )
     args = parser.parse_args()
     if not 1024 <= args.port <= 65535:

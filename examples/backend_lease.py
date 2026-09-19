@@ -44,7 +44,8 @@ class BackendLease:
         if self.marker.exists():
             self.release()
             raise RuntimeError(
-                "Previous inference completion is unresolved. Confirm Voicebox has been "
+                "Previous inference completion is unresolved. Confirm the configured synthesis "
+                "backend and its workers have been "
                 "stopped/restarted, then run Studio with --confirm-backend-restarted."
             )
 

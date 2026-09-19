@@ -55,3 +55,19 @@ The full LiveKit/Qwen conversation retest still timed out before receiving reply
 audio; its final UI diagnostic reported that the recognition connection closed.
 Session cleanup returned Studio to idle/ready. The reserve fix therefore has unit
 and isolated native proof, but does not yet establish full-conversation reliability.
+
+## Heartbeat and finalization deadlines
+
+The native server processes recognition synchronously between WebSocket reads,
+so it cannot answer a ping while finishing an utterance. A regression reproduces
+the old heartbeat closing this socket before valid finalization completes.
+The heartbeat interval is now `max(10, 2 * finalize_timeout)` seconds, giving its
+pong wait at least the configured finalization deadline. The operation's own
+deadline is unchanged.
+
+The tradeoff is slower detection of an unresponsive idle connection: approximately
+45 seconds with defaults, and up to 360 seconds with the largest allowed
+finalization setting. Active finalization still fails after its configured deadline.
+Tests cover completion before the new ping and after the ping but before its pong
+wait expires. This prevents a reproduced premature-disconnection mechanism; it
+does not prove every earlier live connection failure had that cause.
