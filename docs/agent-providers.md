@@ -10,7 +10,7 @@ providers are unaffected.
 | Provider | Status | Optional dependency |
 | --- | --- | --- |
 | Copilot | Implemented; exact account/model/tool preflight required | `github-copilot-sdk==1.0.13` |
-| Codex | Restricted-agent opt-in; macOS preflight and two-turn model smoke passed | None |
+| Codex | Restricted-agent opt-in; preflight, memory and local-speech integration passed on macOS | None |
 
 Defaults are exactly `model="gpt-5.6-luna"` and `reasoning_effort="low"`.
 There is no automatic model fallback. Copilot model metadata must advertise
@@ -150,9 +150,26 @@ have already succeeded.
 A subsequent explicitly restricted synthetic smoke completed two real Luna/low
 requests with correct conversational memory. First nonempty text arrived in
 **3.59 s and 2.53 s**. Copilot was faster in the small comparison, so Copilot
-remains the default. Studio requires a separate restricted-mode checkbox when
+was the earlier agent-provider default; new Studio libraries now default to local
+Ollama. Studio requires a separate restricted-mode checkbox when
 selecting Codex and persists that consent independently of the provider name.
 Changing to another provider resets the consent.
+
+### Codex speech integration: 19 September 2026
+
+A fresh restricted two-turn check passed with correct synthetic conversational
+memory (first-text times 2.741 and 0.997 seconds). A separate managed Studio
+session used **local LiveKit + local Nemotron + cloud Codex Luna/low + local Qwen**.
+After the SDK's first-reply echo warm-up, synthetic speech interrupted an active
+reply and produced the expected follow-up text and nonzero audio. The specific
+SDK speech handle confirmed interruption. Cleanup returned
+to idle, and the previous all-local settings were restored and read back.
+
+The speech test passed in 43.23 seconds. The agent left its speaking state in
+0.816 seconds; this is not a measurement of audible cancellation latency. It
+used synthetic input, not a physical microphone or private conversation. Codex
+model requests remained cloud requests; command-network isolation does not make
+Codex reasoning local. See [reproduction instructions](evaluation.md#codex-with-local-speech).
 
 ## Isolation and lifecycle
 

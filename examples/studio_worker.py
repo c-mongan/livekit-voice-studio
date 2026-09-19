@@ -206,6 +206,20 @@ async def run() -> None:
             turn_handling=turn_handling,
         )
 
+        reply_sequence = 0
+
+        @session.on("speech_created")
+        def speech_created(event: Any) -> None:
+            nonlocal reply_sequence
+            reply_sequence += 1
+            sequence = reply_sequence
+            report("reply_started", sequence=sequence)
+
+            def completed(handle: Any) -> None:
+                report("reply_completed", sequence=sequence, interrupted=handle.interrupted)
+
+            event.speech_handle.add_done_callback(completed)
+
         @session.on("metrics_collected")
         def metric(event: MetricsCollectedEvent) -> None:
             value = event.metrics
