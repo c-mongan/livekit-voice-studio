@@ -91,6 +91,8 @@ class OwnedSession:
     stop_ready: asyncio.Event = field(default_factory=asyncio.Event)
     hold_playback: bool = False
     playback_admitted: bool = False
+    started_replies: int = 0
+    interrupted_reply_sequences: list[int] = field(default_factory=list)
 
 
 class Studio:
@@ -227,6 +229,10 @@ class Studio:
             },
             # Session handles are control capabilities; never reveal another tab's handle.
             "session": None,
+            "startedReplies": self.current.started_replies if self.current else 0,
+            "interruptedReplySequences": (
+                self.current.interrupted_reply_sequences.copy() if self.current else []
+            ),
             "metrics": self.metrics.copy(),
             "turns": [turn.copy() for turn in self.turns],
             "message": message,
@@ -529,7 +535,13 @@ class Studio:
             if isinstance(error, (StudioError, asyncio.CancelledError)):
                 raise
             raise StudioError(
-                "Cannot create the LiveKit session. Check server credentials and connectivity.", 503
+                "Cannot create the LiveKit session. "
+                + (
+                    "Start the local server with livekit-server --dev --bind 127.0.0.1, then retry."
+                    if os.environ.get("VOICEBOX_LIVEKIT_MODE") == "local"
+                    else "Check the configured server credentials and connectivity, then retry."
+                ),
+                503,
             ) from None
 
     def require_owner(self, session_id: str) -> OwnedSession:
@@ -653,7 +665,21 @@ class Studio:
         if data.get("key") != owned.key or self.current is not owned:
             return
         event = data.get("event")
-        if event == "audition_started" and owned.kind == "audition":
+        if event == "reply_started" and owned.kind == "room":
+            sequence = data.get("sequence")
+            if type(sequence) is int and sequence == owned.started_replies + 1:
+                owned.started_replies = sequence
+        elif event == "reply_completed" and owned.kind == "room":
+            sequence = data.get("sequence")
+            if (
+                type(sequence) is int
+                and 1 <= sequence <= owned.started_replies
+                and data.get("interrupted") is True
+                and sequence not in owned.interrupted_reply_sequences
+            ):
+                owned.interrupted_reply_sequences.append(sequence)
+                del owned.interrupted_reply_sequences[:-16]
+        elif event == "audition_started" and owned.kind == "audition":
             owned.stop_ready.set()
         elif event == "audition_audio" and owned.kind == "audition":
             if owned.audition_state != "generating":

@@ -240,3 +240,104 @@ def test_cloud_presets_save_reload_and_doctor_preserve_effort(tmp_path, provider
     assert env["VOICEBOX_LLM_PROVIDER"] == provider
     assert env["VOICEBOX_LLM_MODEL"] == model
     assert env["VOICEBOX_REASONING_EFFORT"] == effort
+
+
+@pytest.mark.parametrize(
+    ("code", "expected"),
+    [
+        (401, "rejected authentication"),
+        (403, "rejected authentication"),
+        (404, "/v1"),
+        (503, "service is unavailable"),
+    ],
+)
+async def test_endpoint_errors_have_specific_safe_recovery(server, code, expected):
+    from examples.component_endpoints import check_llm_endpoint
+
+    async def handler(request):
+        return web.Response(status=code, text="private-provider-body-and-secret")
+
+    url = await server(handler)
+    with pytest.raises(RuntimeError, match=expected) as error:
+        await check_llm_endpoint("openai-compatible", url, "test")
+    assert "private-provider" not in str(error.value)
+
+
+async def test_missing_model_can_be_prepared_and_retried_without_download(server):
+    from examples.component_endpoints import check_llm_endpoint
+
+    available = False
+    requests = []
+
+    async def handler(request):
+        requests.append((request.method, request.path))
+        return web.json_response({"data": [{"id": "test"}] if available else []})
+
+    url = await server(handler)
+    with pytest.raises(RuntimeError, match="ollama list"):
+        await check_llm_endpoint("ollama", url, "test")
+    available = True
+    await check_llm_endpoint("ollama", url, "test")
+    assert requests == [("GET", "/models"), ("GET", "/models")]
+
+
+async def test_broken_reply_stream_fails_without_retry_then_new_turn_recovers(server):
+    from livekit.agents import APIConnectionError, llm
+
+    from examples.endpoint_llm import EndpointLLM
+
+    requests = []
+
+    async def handler(request):
+        requests.append(await request.json())
+        if len(requests) == 1:
+            response = web.StreamResponse(headers={"Content-Type": "text/event-stream"})
+            await response.prepare(request)
+            await response.write(
+                b'data: {"id":"one","choices":[{"index":0,'
+                b'"delta":{"content":"Partial"},"finish_reason":null}]}\n\n'
+            )
+            request.transport.abort()
+            return response
+        return web.Response(
+            text='data: {"id":"two","choices":[{"index":0,'
+            '"delta":{"content":"Recovered"},"finish_reason":"stop"}]}\n\n'
+            "data: [DONE]\n\n",
+            content_type="text/event-stream",
+        )
+
+    url = await server(handler)
+    model = EndpointLLM(provider="ollama", model="test", base_url=url, api_key="ollama")
+    context = llm.ChatContext()
+    context.add_message(role="user", content="Synthetic recovery check")
+    try:
+        with pytest.raises(APIConnectionError):
+            async with model.chat(chat_ctx=context) as stream:
+                async for _ in stream:
+                    pass
+        assert len(requests) == 1
+        async with model.chat(chat_ctx=context) as stream:
+            text = "".join([chunk.delta.content or "" async for chunk in stream if chunk.delta])
+        assert text == "Recovered"
+        assert len(requests) == 2
+    finally:
+        await model.aclose()
+    assert model.endpoint_client.is_closed()
+
+
+async def test_unreachable_local_model_service_can_recover(server):
+    from examples.component_endpoints import check_llm_endpoint
+
+    connected = False
+
+    async def handler(request):
+        if not connected:
+            request.transport.abort()
+            return web.Response()
+        return web.json_response({"data": [{"id": "test"}]})
+
+    url = await server(handler)
+    with pytest.raises(RuntimeError, match="ollama serve"):
+        await check_llm_endpoint("ollama", url, "test")
+    connected = True
+    await check_llm_endpoint("ollama", url, "test")

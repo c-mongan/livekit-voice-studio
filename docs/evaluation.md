@@ -168,7 +168,10 @@ check still runs with its existing opt-in flag.
 The spoken test publishes continuous synthetic microphone audio, including silence
 between phrases. It completes a first reply, then speaks over a second reply.
 It requires the agent to leave its speaking state within three seconds, produce
-the expected follow-up text and nonzero audio, and clean up to idle. It does not
+the expected follow-up text and nonzero audio, and clean up to idle. It also
+requires LiveKit's interrupted flag on the specific counting reply, using an
+speech-handle sequence assigned before generation. Natural completion or interruption of a later
+reply cannot satisfy this check. It does not
 send a Stop RPC or a typed follow-up for the interrupted turn. The reported state
 transition time is not a measurement of audible cancellation latency.
 
@@ -180,3 +183,29 @@ test explicitly excludes that initial window; Studio retains the SDK's protectio
 against speaker echo. Use Stop reply if you need to cancel immediately. This is
 not proof of headset, speakerphone, accent, background-noise or browser-microphone
 performance. See [the measured results](reliability-2026-09-19.md).
+
+### Codex with local speech
+
+This is an explicit cloud-reasoning test. Keep LiveKit and recognition local,
+select Codex in Settings, and separately consent to its restricted-agent mode.
+Use the same synthetic WAV described above. Then run:
+
+```sh
+STUDIO_RELIABILITY_INTEGRATION=1 STUDIO_CODEX_SPEECH_INTEGRATION=1 \
+STUDIO_TEST_RESTRICTED_CODEX=1 STUDIO_BARGE_IN_AUDIO=/tmp/studio-barge-in.wav \
+  uv run --no-sync python -m pytest tests/integration/test_running_studio.py \
+  -k codex -q -s
+```
+
+The test refuses other reasoning routes or missing consent. It completes an
+initial reply, then requires spoken interruption and the correct follow-up, with
+local Qwen audio and clean session shutdown. It does not change settings; switch
+back to your preferred provider afterward. It inherits the same initial echo
+warm-up exclusion and synthetic-only acceptance limits.
+
+Follow-up measurements now begin at a new agent speaking interval after
+interruption. Audio draining before that interval is excluded. Transcript streams
+opened before the follow-up was armed cannot satisfy the expected-text check,
+even when their last chunks arrive late. Audio already received for the new reply
+is retained while a longer input fixture finishes. Offline regressions cover
+these boundaries independently of model responses.

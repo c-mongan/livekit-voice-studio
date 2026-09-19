@@ -10,6 +10,8 @@ import aiohttp
 import pytest
 from livekit import rtc
 
+from benchmarks.reply_observation import ReplyObservation
+
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.skipif(
@@ -28,8 +30,11 @@ async def status(http):
         return await response.json()
 
 
-def require_local(state):
-    assert all(state[key].get("local") is True for key in ("ai", "stt", "livekit")), (
+def require_local(state, codex=False):
+    if codex:
+        assert state["ai"]["provider"] == "codex", "Select Codex explicitly before this test."
+    components = ("stt", "livekit") if codex else ("ai", "stt", "livekit")
+    assert all(state[key].get("local") is True for key in components), (
         "Select local reasoning, recognition and LiveKit before running this test."
     )
 
@@ -40,17 +45,16 @@ async def post(http, path, body):
         return await response.json()
 
 
-async def exercise(http, iteration, spoken_audio=None):
+async def exercise(http, iteration, spoken_audio=None, codex=False):
     initial = await status(http)
     assert initial["phase"] == "idle", "Another session is active; no takeover is allowed."
-    require_local(initial)
+    require_local(initial, codex=codex)
     grant = await post(http, "/api/session", {})
     room = rtc.Room()
     tasks = []
     errors = []
     samples = 0
-    followup_expected = False
-    followup_transcribed = asyncio.Event()
+    reply = ReplyObservation()
     last_audio = 0.0
     audio_source = None
     interruption_seconds = None
@@ -63,6 +67,7 @@ async def exercise(http, iteration, spoken_audio=None):
                 count = sum(abs(sample) > 100 for sample in event.frame.data)
                 if count:
                     samples += count
+                    reply.audio(count)
                     last_audio = time.monotonic()
         finally:
             await stream.aclose()
@@ -81,20 +86,24 @@ async def exercise(http, iteration, spoken_audio=None):
             task.add_done_callback(observed)
             tasks.append(task)
 
-    async def read_transcript(reader, identity):
+    @room.on("participant_attributes_changed")
+    def attributes(changed, participant):
+        if participant.identity == grant["agentIdentity"] and "lk.agent.state" in changed:
+            reply.state_changed(changed["lk.agent.state"])
+
+    async def read_transcript(reader, identity, token):
         try:
             if identity != grant["agentIdentity"]:
                 return
             text = ""
             async for chunk in reader:
                 text = (text + chunk)[-4096:]
-                if followup_expected and "recovery works" in text.lower():
-                    followup_transcribed.set()
+                reply.transcript(token, text)
         finally:
             reader.close()
 
     def transcript(reader, identity):
-        task = asyncio.create_task(read_transcript(reader, identity))
+        task = asyncio.create_task(read_transcript(reader, identity, reply.token))
         task.add_done_callback(observed)
         tasks.append(task)
 
@@ -109,9 +118,14 @@ async def exercise(http, iteration, spoken_audio=None):
     heart.add_done_callback(observed)
 
     async def wait_for(predicate):
+        checked_at = 0.0
         async with asyncio.timeout(90):
             while not predicate():
                 assert not errors, errors
+                if time.monotonic() - checked_at > 1:
+                    current = await status(http)
+                    assert current.get("message") is None, current.get("message")
+                    checked_at = time.monotonic()
                 await asyncio.sleep(0.05)
         assert not errors, errors
 
@@ -140,7 +154,7 @@ async def exercise(http, iteration, spoken_audio=None):
         async with asyncio.timeout(150):
             while True:
                 state = await status(http)
-                require_local(state)
+                require_local(state, codex=codex)
                 assert state["phase"] not in ("idle", "blocked"), state.get("message")
                 if state["phase"] == "active":
                     break
@@ -178,6 +192,7 @@ async def exercise(http, iteration, spoken_audio=None):
             await ask("Reply with only: Ready for the next question.")
             await wait_for(listening)
             await asyncio.sleep(3)
+        counting_reply_sequence = (await status(http))["startedReplies"] + 1
         await ask("Count slowly from one to twenty, saying every number.")
         interrupted_while_speaking = agent().attributes.get("lk.agent.state") == "speaking"
         assert interrupted_while_speaking, "Reply ended before the interruption could be tested."
@@ -189,11 +204,10 @@ async def exercise(http, iteration, spoken_audio=None):
             )
             assert json.loads(result)["stopped"] is True
             await wait_for(listening)
-            followup_expected = True
-            fresh_samples = await ask("Reply with only: Recovery works.")
+            reply.arm()
+            await ask("Reply with only: Recovery works.")
         else:
             # No Stop RPC or typed follow-up: recognition must supply the new request.
-            followup_expected = True
 
             async def speak():
                 for offset in range(0, len(spoken_audio), 1920):
@@ -205,31 +219,34 @@ async def exercise(http, iteration, spoken_audio=None):
             speaker = asyncio.create_task(speak())
             speaker.add_done_callback(observed)
             tasks.append(speaker)
-            # Bound this below the long counting reply's natural completion.
+            # Bound VAD response time; the SDK interruption flag below separately
+            # distinguishes an interruption from natural reply completion.
             async with asyncio.timeout(3):
                 await wait_for(lambda: agent().attributes.get("lk.agent.state") != "speaking")
             interruption_seconds = time.monotonic() - began
-            before = samples
+            reply.arm()
             await wait_for(speaker.done)
             await speaker
-            await wait_for(followup_transcribed.is_set)
-            await wait_for(lambda: samples - before >= 2400)
-            fresh_samples = samples - before
-        await wait_for(followup_transcribed.is_set)
+        await wait_for(lambda: reply.complete)
         await wait_for(listening)
         state = await status(http)
         assert state.get("message") is None, state.get("message")
+        assert counting_reply_sequence in state["interruptedReplySequences"], (
+            "SDK did not mark the counting reply interrupted; natural completion is insufficient."
+        )
         assert not errors, errors
         print(
             json.dumps(
                 {
                     "session": iteration + 1,
+                    "reasoning_provider": initial["ai"]["provider"],
                     "interruption_mode": "speech" if spoken_audio is not None else "rpc",
                     "speaking_state_exit_seconds": interruption_seconds,
                     "initial_echo_warmup_excluded": spoken_audio is not None,
                     "interrupted_while_speaking": interrupted_while_speaking,
-                    "fresh_followup_samples": fresh_samples,
-                    "followup_text_matched": followup_transcribed.is_set(),
+                    "sdk_interruption_confirmed": True,
+                    "fresh_followup_samples": reply.samples,
+                    "followup_text_matched": reply.text_matched,
                     "concurrent_start_rejected": True,
                 }
             ),
@@ -265,12 +282,10 @@ async def test_two_sessions_interrupt_followup_and_cleanup():
             await exercise(http, iteration)
 
 
-@pytest.mark.skipif(
-    os.environ.get("STUDIO_BARGE_IN_AUDIO") is None,
-    reason="Supply a 16 kHz mono WAV saying: Stop talking. Reply with only: Recovery works.",
-)
-async def test_spoken_interruption_and_cleanup():
-    with wave.open(os.environ["STUDIO_BARGE_IN_AUDIO"], "rb") as fixture:
+def spoken_fixture():
+    path = os.environ.get("STUDIO_BARGE_IN_AUDIO")
+    assert path, "Supply STUDIO_BARGE_IN_AUDIO containing the synthetic recovery phrase."
+    with wave.open(path, "rb") as fixture:
         assert fixture.getnchannels() == 1 and fixture.getsampwidth() == 2
         assert fixture.getframerate() == 16000
         assert 0 < fixture.getnframes() <= 16000 * 15
@@ -278,6 +293,29 @@ async def test_spoken_interruption_and_cleanup():
     resampler = rtc.AudioResampler(16000, 48000, num_channels=1)
     frames = resampler.push(rtc.AudioFrame(audio, 16000, 1, len(audio) // 2))
     frames += resampler.flush()
-    audio = b"".join(bytes(frame.data) for frame in frames)
+    return b"".join(bytes(frame.data) for frame in frames)
+
+
+@pytest.mark.skipif(
+    os.environ.get("STUDIO_BARGE_IN_AUDIO") is None,
+    reason="Supply a 16 kHz mono WAV saying: Stop talking. Reply with only: Recovery works.",
+)
+async def test_spoken_interruption_and_cleanup():
+    audio = spoken_fixture()
     async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as http:
         await exercise(http, 0, spoken_audio=audio)
+
+
+@pytest.mark.skipif(
+    os.environ.get("STUDIO_CODEX_SPEECH_INTEGRATION") != "1"
+    or os.environ.get("STUDIO_TEST_RESTRICTED_CODEX") != "1",
+    reason="Explicitly authorize Codex cloud reasoning and its restricted-agent mode.",
+)
+async def test_codex_spoken_interruption_and_cleanup():
+    audio = spoken_fixture()
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as http:
+        async with http.get(BASE + "/api/settings") as response:
+            response.raise_for_status()
+            settings = await response.json()
+        assert settings["llmProvider"] == "codex" and settings["codexRestrictedApproved"] is True
+        await exercise(http, 0, spoken_audio=audio, codex=True)

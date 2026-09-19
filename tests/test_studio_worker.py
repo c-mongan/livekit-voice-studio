@@ -15,6 +15,7 @@ async def test_rpc_registration_follows_connection_and_shutdown_drains(
     reports = []
     order = []
     handlers = {}
+    session_handlers = {}
 
     class Room:
         connected = False
@@ -51,6 +52,19 @@ async def test_rpc_registration_follows_connection_and_shutdown_drains(
 
     async def start(**kwargs):
         assert kwargs["record"] is False
+        callbacks = []
+        for _ in range(2):
+            session_handlers["speech_created"](
+                SimpleNamespace(speech_handle=SimpleNamespace(add_done_callback=callbacks.append))
+            )
+        # Completion callbacks retain their originating sequence, even out of order
+        # and without any assistant chat item (for example, an immediate stop).
+        callbacks[1](SimpleNamespace(interrupted=True))
+        callbacks[0](SimpleNamespace(interrupted=False))
+        assert [data for event, data in reports if event == "reply_completed"] == [
+            {"sequence": 2, "interrupted": True},
+            {"sequence": 1, "interrupted": False},
+        ]
         with pytest.raises(studio_worker.rtc.RpcError) as error:
             await handlers["rpc"](SimpleNamespace(caller_identity="another-participant"))
         assert error.value.code == 1403
@@ -70,7 +84,7 @@ async def test_rpc_registration_follows_connection_and_shutdown_drains(
         aclose=AsyncMock(side_effect=drain),
     )
     session = SimpleNamespace(
-        on=lambda name: lambda callback: callback,
+        on=lambda name: lambda callback: session_handlers.setdefault(name, callback),
         start=AsyncMock(side_effect=start),
         aclose=AsyncMock(),
         interrupt=AsyncMock(

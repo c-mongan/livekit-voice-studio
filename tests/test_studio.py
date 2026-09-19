@@ -664,3 +664,58 @@ async def test_audition_deadline_reason_survives_safe_drain(broker, monkeypatch,
             "duration": "Voice sample generation reached its time limit. Try a shorter sample.",
         }
         assert result["message"] == expected[reason]
+
+
+@pytest.mark.parametrize(
+    "mode, expected", [("local", "livekit-server --dev"), ("configured", "credentials")]
+)
+async def test_livekit_connection_failure_can_retry_without_restart(
+    broker, monkeypatch, mode, expected
+):
+    process, fake_api = await fake_backend(broker, monkeypatch)
+    monkeypatch.setenv("VOICEBOX_LIVEKIT_MODE", mode)
+    fake_api.room.list_rooms.side_effect = ConnectionError("private-details")
+    with pytest.raises(StudioError, match=expected) as error:
+        await broker.create()
+    assert "private-details" not in str(error.value)
+    assert broker.current is None and broker.phase == "idle"
+    assert not broker.lease.marker.exists()
+    fake_api.room.create_room.assert_not_awaited()
+    fake_api.room.list_rooms.side_effect = None
+    await broker.create()
+    owner = broker.current
+    process.event(owner, "ready")
+    process.event(owner, "finished", safe=True)
+    process.finish()
+    await owner.monitor
+    assert broker.phase == "idle"
+    assert not broker.lease.marker.exists()
+
+
+def test_reply_sequences_distinguish_interrupted_followup_from_normal_first_reply(broker):
+    owner = owned_session()
+    broker.current = owner
+    started = {"key": owner.key, "event": "reply_started", "sequence": 1}
+    completed = {"key": owner.key, "event": "reply_completed", "sequence": 1, "interrupted": True}
+    broker._event(owner, {**started, "key": "wrong"})
+    broker._event(owner, {**started, "sequence": True})
+    assert owner.started_replies == 0
+    broker._event(owner, started)
+    broker._event(owner, {**started, "sequence": 2})
+    broker._event(owner, {**completed, "sequence": 2})
+    broker._event(owner, {**completed, "interrupted": False})
+    assert owner.started_replies == 2
+    assert 1 not in owner.interrupted_reply_sequences
+    assert owner.interrupted_reply_sequences == [2]
+    # The first reply can be interrupted even if it has no chat item.
+    broker._event(owner, completed)
+    broker._event(owner, completed)
+    assert owner.interrupted_reply_sequences == [2, 1]
+    replacement = owned_session()
+    broker.current = replacement
+    broker._event(owner, {**started, "sequence": 3})
+    assert owner.started_replies == 2
+    assert replacement.started_replies == 0
+    replacement.kind = "audition"
+    broker._event(replacement, started)
+    assert replacement.started_replies == 0

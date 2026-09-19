@@ -8,7 +8,13 @@ different things; the UI reports missing setup before starting a conversation.
 | Server unavailable | Run `./studio start`. If it fails, read the private logs described in [launching](launching.md). |
 | Model missing | Check `VOICEBOX_MLX_MODEL_PATH` against the complete existing Qwen 0.6B snapshot. Use the explicit [first-run setup](quickstart.md), not a different model. |
 | Recognizer unavailable | Check the native executable and model paths with the [Nemotron setup guide](local-stt.md). Don't start a second sidecar on the same port. |
-| Provider unavailable | Sign in to the selected CLI or configure the selected cloud provider. Installed CLI files alone do not prove model access. |
+| Local LiveKit unavailable | Start `livekit-server --dev --bind 127.0.0.1`, keep it running, then retry. Studio and LiveKit are separate services. |
+| Ollama unavailable | Start `ollama serve` if it is not already running. Check the API address in Settings, including the correct port and `/v1`. |
+| Selected chat model missing | Run `ollama list` and select an installed chat model. Install another model explicitly if wanted; Studio does not download or choose a fallback. |
+| Model-list route missing (404) | Check the API base address in Settings. Many compatible servers require `/v1`; use that server's documented base URL. |
+| Reasoning authentication rejected (401/403) | Check the selected server's credential and model access. A custom endpoint uses `VOICEBOX_CUSTOM_LLM_API_KEY`, not your unrelated OpenAI key. |
+| Reasoning service unavailable (5xx) | Repair or restart that service, then retry. Studio has not switched providers. |
+| Codex/Copilot unavailable | Sign in to the selected CLI and verify the requested model is available. Codex also needs the separate restricted-agent consent. Installed CLI files alone do not prove model access. |
 | Microphone denied | Keep using text, or explicitly grant microphone access in your browser. |
 | No sound | Check your output device and system volume; use the browser's audio-start control if shown. |
 | Voice sounds wrong | Verify the exact reference transcript and record again without clipping or background speech. Use the [audition checklist](voice-quality.md). |
@@ -60,3 +66,15 @@ cold model load can behave differently from a warm one. Keep dependency installs
 and other heavy work separate from voice measurements, and record failed cold
 starts alongside successful samples. Do not increase deadlines or weaken drain
 checks merely to make a benchmark pass.
+
+## Retry after a connection or model failure
+
+If startup fails before a worker starts, Studio returns to idle. Fix the service,
+address or model choice, then start a new session; you do not need to clear any
+backend marker. If a running session fails, end it and wait for cleanup before
+retrying. A blocked state requires the verified recovery procedure above.
+
+A dropped model stream is an error, even if some words arrived first. Studio's
+endpoint adapter does not automatically resend the prompt or choose another
+provider. Explicit retries can create another provider request; partial output is
+not proof that the previous answer completed.

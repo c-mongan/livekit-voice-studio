@@ -102,6 +102,21 @@ async def check_llm_endpoint(provider: str, url: str, model: str, api_key: str =
             async with client.get(
                 endpoint + "/models", headers=headers, allow_redirects=False
             ) as response:
+                if response.status in (401, 403):
+                    raise RuntimeError(
+                        "The reasoning endpoint rejected authentication. Check its server-side "
+                        "credential and model access, then retry."
+                    )
+                if response.status == 404:
+                    raise RuntimeError(
+                        "The reasoning endpoint has no model-list route. In Settings, check "
+                        "the API base address, including /v1 when required, then retry."
+                    )
+                if response.status >= 500:
+                    raise RuntimeError(
+                        "The reasoning service is unavailable. Restart or repair the selected "
+                        "service, then retry. Studio has not switched providers."
+                    )
                 if response.status != 200:
                     raise ValueError
                 raw = bytearray()
@@ -118,10 +133,20 @@ async def check_llm_endpoint(provider: str, url: str, model: str, api_key: str =
                 ):
                     raise RuntimeError(
                         "The selected model is unavailable at the reasoning endpoint. "
-                        "Prepare it explicitly; Studio never downloads or falls back."
+                        + (
+                            "Run ollama list and choose an installed chat model in Settings. "
+                            if provider == "ollama"
+                            else "Check the server's model list and update the model in Settings. "
+                        )
+                        + "Studio never downloads or falls back."
                     )
     except (aiohttp.ClientError, TimeoutError, ValueError, UnicodeError):
         raise RuntimeError(
-            "The reasoning endpoint could not be verified. Check its address, service and "
-            "server-side credential; Studio never falls back to another provider."
+            "The reasoning endpoint could not be verified. "
+            + (
+                "Start Ollama with ollama serve, then check its API address in Settings. "
+                if provider == "ollama"
+                else "Check the API address, running service and server-side credential. "
+            )
+            + "Retry when ready; Studio never falls back to another provider."
         ) from None

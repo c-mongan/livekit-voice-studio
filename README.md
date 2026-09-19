@@ -1,171 +1,172 @@
 # LiveKit Voice Studio
 
-The standalone setup runs Qwen directly with this project's private voice library.
-It does not require the separate Voicebox application or HTTP server. The older
-Voicebox adapter remains optional; existing `VOICEBOX_*` configuration names and
-Python package imports remain compatible.
+**Talk to local or cloud AI in a voice you choose.** Record a voice you own or
+have permission to use, try it with new text, then start a conversation.
 
-Talk with **a local model or your chosen cloud AI** using a voice you've recorded or have permission to use.
+Run the whole voice pipeline on your Mac, or switch individual components to
+cloud services. Explore LiveKit rooms, speech, interruption and recovery through
+a working app—with setup checks and troubleshooting exercises built in.
 
-Record a short reference, hear it say something new, then start a conversation.
-Speech recognition and generation run on your Mac; you choose the service that
-answers. The Voicebox desktop app can stay closed.
+![Voice Studio with local routing, conversation controls and pipeline details](docs/studio-local.jpg)
 
-![LiveKit Voice Studio: local routing and conversation workspace](docs/studio-local.jpg)
+[Get started](docs/quickstart.md) · [Choose local or cloud](#choose-your-setup) ·
+[See the demo](docs/demo.md) · [Learn LiveKit](docs/learn-livekit.md)
 
-[Two-minute demo walkthrough](docs/demo.md) · [First-run guide](docs/quickstart.md)
+> **Development preview:** MIT-licensed, single-user, and tested on Apple Silicon.
+> The local voice path uses Qwen directly through MLX Audio. You do not need the
+> separate Voicebox app. Models and dependencies have their own licenses.
 
-## Development preview
+## Choose your setup
 
-The source is available under MIT, with separate licenses for dependencies and
-models. This is an early single-user app for Apple Silicon, not a supported
-production service. You can run the components locally or select remote services.
-Remote providers require your own accounts; disconnected operation needs all
-models installed and has separate verification requirements.
+Each component has a separate job. Choosing a cloud language model does not move
+your speech models to the cloud; choosing LiveKit Cloud does not move your agent
+worker there.
 
-Synthetic spoken tests cover replies, deliberate interruption, pauses and recovery.
-One earlier intermittent provider failure remains unexplained; response speed varies.
-Human listening and an independent user installation are still needed. See the
-[preview release notes](docs/preview-release.md) for tested scope and limitations.
+| Component | What it does | Local option | Other options |
+| --- | --- | --- | --- |
+| LiveKit | Connects the browser and voice agent | Local LiveKit server | LiveKit Cloud or your self-hosted server |
+| Speech recognition | Turns your speech into text | Nemotron | Configured OpenAI or Azure speech |
+| Language model | Writes the reply | Ollama or a local compatible server | Codex, Copilot, OpenAI, Azure or a compatible endpoint |
+| Voice generation | Speaks the reply in your chosen voice | Qwen through MLX Audio | Optional existing Voicebox HTTP adapter |
 
-## Set it up with your coding agent
+**New installations default to local LiveKit + Nemotron + Ollama + Qwen.**
+Existing installations keep their saved settings. Change components in
+**Settings → Connection & AI** between sessions. Missing services produce an
+error; Studio never silently switches to cloud or downloads a model.
 
-Give Codex, Copilot, or another coding agent this prompt:
+### Entirely local
 
-> Set up Voicebox Studio on this machine. Read https://github.com/c-mongan/livekit-voice-studio/blob/main/docs/agent-quickstart.md and follow it. Reuse existing installations and preserve my settings. Ask before model downloads or paid service setup. Let me complete sign-in and voice consent. Verify the app and report what works and what is still blocked.
+Use local LiveKit, Nemotron, Ollama and Qwen. Recognition, reasoning, generated
+speech and room transport all run on your computer. No cloud AI account or
+LiveKit Cloud project is needed for this setup.
 
-The [agent quickstart](docs/agent-quickstart.md) provides an ordered setup and
-verification checklist. It cannot supply accounts, bypass permissions, or guarantee
-compatibility with every machine. Prefer the manual guide below if you want to
-run each step yourself.
+Start with an installed small chat model such as `qwen3:1.7b`. You can choose
+another installed Ollama model, or supply an OpenAI-compatible model server.
+Models share memory with the speech pipeline, so larger is not always better.
+See [local setup, model choices and memory](docs/local-cloud-components.md).
 
-## Copilot or Codex?
+This route has passed synthetic spoken conversations, interruption after initial
+echo warm-up, follow-ups and cleanup. That is **local-route evidence, not a
+network-disabled/offline certification**: install models first, and remember that
+a local endpoint can itself proxy requests elsewhere.
 
-| Reasoning provider | What has been verified |
+### Local speech with cloud reasoning
+
+Keep LiveKit, Nemotron and Qwen local; select your language-model provider in
+Settings. Conversation text goes to that provider. Your private voice reference
+stays on your Mac.
+
+| Provider | Verified scope |
 | --- | --- |
-| GitHub Copilot | Complete spoken conversations, interruption and follow-up with local speech |
-| OpenAI Codex | Restricted-agent preflight and two-turn reasoning/memory; full Codex speech pipeline still unverified |
+| Ollama | Local spoken conversations, interruption and follow-up |
+| GitHub Copilot | Spoken conversations, interruption and follow-up with local speech |
+| OpenAI Codex | Restricted preflight, two-turn memory, and a spoken interruption/follow-up with local speech after echo warm-up |
+| OpenAI, Azure, compatible servers | Implemented; validate your own endpoint, account and model |
 
-Both generate conversation replies; local Nemotron recognizes speech and Qwen
-speaks it. You need your own compatible account and installed CLI. Copilot uses
-no tools; Codex requires a separate restricted-agent consent step. See
-[provider setup and boundaries](docs/agent-providers.md).
+Codex and Copilot use an installed, signed-in CLI; neither is an on-device language
+model. Copilot is configured without tools. Codex requires separate consent to a
+**restricted agent**, with a private workspace, minimal runtime-file access and
+command networking disabled. It still uses cloud model/authentication traffic and
+trusted global Codex instructions. It is not tool-free. Read the
+[provider setup, evidence and boundaries](docs/agent-providers.md).
 
-## Get started
+### Cloud or self-hosted LiveKit
 
-The tested setup is an **Apple Silicon Mac with 16 GB RAM**, Python 3.12,
+Keep the same app and choose a configured server in Settings. Store its URL and
+credentials in your private `.env`. A remote LiveKit server carries live audio and
+text; the Qwen worker still runs on your Mac. Public self-hosting requires proper
+TLS and network configuration. The [component guide](docs/local-cloud-components.md)
+separates same-machine development from public deployment.
+
+## Get your first conversation working
+
+The tested local setup is an **Apple Silicon Mac with 16 GB RAM**, Python 3.12,
 Node.js 22.12+ and [uv](https://docs.astral.sh/uv/).
-You'll also need:
 
-- Qwen TTS 0.6B weights and the Nemotron CPU recognizer, installed explicitly.
-- A voice you own or have permission to use.
-- Local LiveKit and Ollama, or your own configured LiveKit server and reasoning
-  provider. See [local/cloud choices](docs/local-cloud-components.md).
+1. **Install and configure** using the [first-run guide](docs/quickstart.md).
+   It covers LiveKit, Ollama, Qwen weights and the native recognizer. Downloads
+   are explicit; opening Studio does not install models.
+2. **Check the setup** with `./studio doctor`. It checks configuration without
+   loading models or contacting providers and tells you what needs attention.
+3. **Open Studio** from your configured checkout:
 
-**New installation? Follow the [first-run guide](docs/quickstart.md).**
-It covers dependencies, model downloads, disk space and private configuration.
-Nothing downloads automatically when you open the app.
-After installing dependencies, `./studio doctor` checks setup without contacting
-providers or loading models and tells you what to fix next.
+   ```sh
+   ./studio start --open
+   ```
 
-For an already configured checkout:
+4. **Record → audition → chat.** Record 5–30 seconds, check the transcript, and
+   audition new text. Then start a session and type or turn on the microphone.
 
-```sh
-./studio start --open
-```
+The microphone stays off until you enable it. The launcher finishes while macOS
+keeps Studio running. Use `./studio status` to check it and `./studio stop` to stop
+it. See [launching and recovery](docs/launching.md).
 
-The command finishes while macOS keeps the server running.
-Use `./studio status` to check it and `./studio stop` when you're done.
-See [launching and recovery](docs/launching.md) for details.
+<details>
+<summary>Prefer setup help from a coding agent?</summary>
 
-## Record → audition → chat
+Give your agent this prompt:
 
-1. **Record** 5–30 seconds in a quiet room. Check that the transcript matches.
-2. **Audition** the saved voice with new text. This is generated speech, not
-   a replay of your recording.
-3. **Choose** the voice, start a session, then type or turn on your microphone.
+> Set up LiveKit Voice Studio on this machine. Read https://github.com/c-mongan/livekit-voice-studio/blob/main/docs/agent-quickstart.md and follow it. Reuse existing installations and preserve my settings. Ask before model downloads or paid service setup. Let me complete sign-in and voice consent. Verify the app and report what works and what is still blocked.
 
-You can interrupt a reply, keep several voices, and switch reasoning providers
-between sessions. The microphone stays off until you enable it.
+The [agent quickstart](docs/agent-quickstart.md) gives an ordered setup checklist.
+It cannot supply accounts or bypass permissions.
 
-## What stays local?
+</details>
 
-| Stage | Default route |
-| --- | --- |
-| Listen | Nemotron turns speech into text on your Mac |
-| Answer | Ollama generates text on your Mac |
-| Speak | Qwen generates audio locally from your selected voice |
-| Connect | Local LiveKit carries audio/text and coordinates the room |
+## Privacy and switching providers
 
-These defaults apply to new libraries; existing settings are preserved. In Settings,
-choose local or configured LiveKit independently of the reasoning provider.
-Reference recordings stay on your machine. A remote LiveKit server carries live
-audio/text; remote reasoning receives text. Cloud transcription receives speech.
-An endpoint running on your computer can itself be a proxy, so locality labels
-describe the configured route rather than certify offline operation.
-Session recording is disabled, and the page keeps transcripts in memory rather
-than browser storage. Provider-side retention depends on your account and terms.
+- Voice references stay in your private local library. Do not commit them or `.env`.
+- Remote reasoning receives conversation text; remote recognition receives speech;
+  remote LiveKit carries room audio and text. Review the route before starting.
+- Settings are locked during a session. End it before switching; the next session
+  starts a new agent conversation. Clearing the visible transcript alone does not
+  reset an active conversation or erase provider-side history.
+- Session recording is disabled. The page keeps transcripts in memory, not browser
+  storage. Provider-side retention depends on your account and terms.
 
-Copilot is configured without tools. Codex requires explicit consent to a
-restricted agent—not tool-free mode. Neither option changes your normal coding
-sessions. Read the [provider boundaries](docs/agent-providers.md) before using
-sensitive content.
+Local [auditions and read-aloud](docs/read-aloud.md) need neither LiveKit nor a
+language-model request.
 
-Local auditions and [read-aloud](docs/read-aloud.md) don't need a reasoning request
-or LiveKit. Read-aloud can speak a short excerpt of an existing reply, including
-an opt-in Codex notification, with Stop and mute controls.
+## Learn LiveKit by breaking and fixing things
 
-[Current standalone validation and remaining checks](docs/oss-readiness.md)
+Use **How it works** to inspect the selected pipeline and measured timings.
+**Practice troubleshooting** provides failure/recovery exercises and interview
+prompts. The [learning guide](docs/learn-livekit.md) explains rooms, participants,
+tracks, tokens, agent state and interruption through the app.
 
-## Status and limits
+For a separate cloud exercise, try [named agent dispatch](docs/cloud-learning.md).
+It uses stock voices and does not upload your private voice reference.
 
-This is an **experimental, single-user app**, not a production service.
-Keep it on loopback; don't expose the token broker through a public tunnel.
-One conversation or audition owns inference at a time.
+## Reliability and known limits
 
-The fast voice path and managed launcher are tested on Apple Silicon.
-Voice likeness, accents, noisy microphones and performance on other hardware
-need your own testing. Start with the [listening checklist](docs/voice-quality.md).
-See [compatibility and measured results](COMPATIBILITY.md) for what was actually
-tested—small synthetic samples are not a latency guarantee.
-The [evaluation guide](docs/evaluation.md) provides repeatable offline checks and
-an explicit opt-in spoken timing report.
+The [evaluation guide](docs/evaluation.md) provides repeatable tests, including
+opt-in synthetic speech checks. [Measured results](docs/provider-recovery-2026-09-19.md)
+and [preview limitations](docs/preview-release.md) distinguish checks from claims.
 
-## Under the hood
+- The first reply has a three-second LiveKit echo-cancellation warm-up. Spoken
+  interruptions can lose words during that window; use **Stop reply** to cancel.
+- Earlier intermittent provider, cold-start and recognition failures are not
+  considered fixed merely because later runs pass.
+- Synthetic tests do not establish human voice likeness, accent/noise handling,
+  audible stop latency, long-session endurance or independent-machine compatibility.
+- Keep this single-user app on loopback. Do not expose its token broker publicly.
+  Unknown inference completion blocks reuse until safe recovery is confirmed.
 
-Studio uses LiveKit's supported room, transcription and interruption APIs.
-Qwen runs directly through MLX Audio with a saved local reference; it doesn't
-require the Voicebox app or server. The separate
-[`livekit-plugins-voicebox` Python plugin](livekit-plugins-voicebox/README.md)
-supports the original Voicebox HTTP backend. No package or model weights are
-published with this repository.
+See [troubleshooting](docs/troubleshooting.md), the [listening checklist](docs/voice-quality.md)
+and [platform compatibility](COMPATIBILITY.md). Expressive cloned speech remains
+an [experiment](docs/expressive-experiment.md), not a promised feature.
 
-[Architecture](docs/architecture.md) · [Voice settings](docs/voices-and-providers.md) ·
-[Existing Voicebox imports](docs/voice-performance.md) · [Troubleshooting](docs/troubleshooting.md)
+## Contribute
 
-## Credits and contributing
+[Contributing](CONTRIBUTING.md) · [Architecture](docs/architecture.md) ·
+[Security reporting](SECURITY.md) · [MIT license](LICENSE)
 
-The UI adapts LiveKit's MIT-licensed React agent starter. Studio builds on
-LiveKit, Voicebox, MLX Audio, Qwen and NVIDIA's Nemotron speech runtime.
-Code, model weights and native dependencies have separate license terms;
-see [provenance](docs/provenance.md), [compatibility](COMPATIBILITY.md#license-boundaries)
-and [third-party notices](web/THIRD_PARTY_LICENSES).
+The UI adapts LiveKit's MIT-licensed React agent starter. Studio builds on LiveKit,
+Voicebox, MLX Audio, Qwen and NVIDIA's Nemotron runtime. See
+[provenance](docs/provenance.md) and [third-party notices](web/THIRD_PARTY_LICENSES).
+No model weights or native binaries are distributed with the repository.
 
-[MIT license](LICENSE) · [Contributing](CONTRIBUTING.md) · [Security reporting](SECURITY.md)
-
-For source-release contents and license boundaries, see [release preparation](docs/releasing.md).
-
-## Learn by using the app
-
-**First conversation guide** shows local setup checks and the next steps.
-**Check microphone** offers an eight-second browser-only recording and replay.
-**How it works** reveals the connection, pipeline, and actual measured timings.
-**Practice troubleshooting** guides three break-and-fix exercises, with recovery
-steps and interview prompts. Start with the [learning guide](docs/learn-livekit.md#an-interview-walkthrough).
-Start with [hands-on exercises](docs/learn-livekit.md), then use the separate
-[cloud learning example](docs/cloud-learning.md) to explore named agent dispatch.
-The cloud example uses stock voices and does not upload your private reference.
-
-Experimental delivery comparisons are kept separate from conversation defaults.
-See [expressive voice experiments](docs/expressive-experiment.md) for the evidence
-needed before calling a local cloned voice expressive.
+Existing `VOICEBOX_*` configuration and Python imports remain compatible. The
+optional [Voicebox HTTP plugin](livekit-plugins-voicebox/README.md) is separate from
+the standalone app. See [release preparation](docs/releasing.md) for source and
+license boundaries.
