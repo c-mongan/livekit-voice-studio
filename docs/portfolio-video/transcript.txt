@@ -1,0 +1,7 @@
+A voice app has more than one moving part.
+
+I built LiveKit Voice Studio to make those parts visible.
+
+Choose speech recognition, reasoning, and voice generation separately, with local options on your Mac.
+
+This is an Apple Silicon development preview. The recorded screen shows a typed test exchange.

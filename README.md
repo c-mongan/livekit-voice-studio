@@ -7,6 +7,17 @@ Run the whole voice pipeline on your Mac, or switch individual components to
 cloud services. Explore LiveKit rooms, speech, interruption and recovery through
 a working app—with setup checks and troubleshooting exercises built in.
 
+<!-- portfolio-video:start -->
+
+## Short video overview
+
+**22 seconds.** Recorded UI and a synthetic typed exchange. Apple Silicon development preview; this clip does not demonstrate microphone capture.
+
+https://github.com/user-attachments/assets/dbd6a64e-f238-4d63-b099-c39adb7132f0
+
+[Open the video](https://github.com/user-attachments/assets/dbd6a64e-f238-4d63-b099-c39adb7132f0) · [Transcript](docs/portfolio-video/transcript.txt) · [Captions](docs/portfolio-video/captions.srt) · [Credits and source notes](docs/portfolio-video/README.md)
+<!-- portfolio-video:end -->
+
 ![Voice Studio with local routing, conversation controls and pipeline details](docs/studio-local.jpg)
 
 [Get started](docs/quickstart.md) · [Choose local or cloud](#choose-your-setup) ·
