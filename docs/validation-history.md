@@ -68,7 +68,7 @@ local configuration, and confirm exclusive backend use before room tests.
 Do not repair caches, download models, or restart another process implicitly.
 
 Cloned speaker identity requires listening and verification because the upstream
-MLX implementation can fall back to an unconditioned voice. BUILD.md section 36
+MLX implementation can fall back to an unconditioned voice. Proposed
 thresholds remain proposals, not approved or measured release limits.
 
 ## Validated model artifact

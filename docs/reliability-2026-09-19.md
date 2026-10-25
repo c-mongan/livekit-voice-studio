@@ -53,7 +53,7 @@ were deselected. Lint, formatting and mypy passed. An earlier grouped check
 printed a native `recursive_mutex lock failed` teardown error after the passing
 pytest summary; that run did not isolate pytest's exit code. The direct rerun
 was clean. The warning was unexplained in that run. A later crash report identified the
-ONNX Runtime telemetry path; see the [follow-up investigation](provider-recovery-2026-09-19.md).
+ONNX Runtime telemetry path; see the [follow-up investigation](history/provider-recovery-2026-09-19.md).
 
 ## Spoken interruption and the initial echo guard
 
