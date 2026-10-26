@@ -39,6 +39,15 @@ text, then start a session and type or turn on the microphone.
 [Watch on GitHub](https://github.com/c-mongan/livekit-voice-studio/releases/tag/portfolio-overview-2026-10-23) · [Download MP4](https://github.com/c-mongan/livekit-voice-studio/releases/download/portfolio-overview-2026-10-23/voice.mp4) · [Credits and transcript](docs/portfolio-video/README.md)
 <!-- video:end -->
 
+## How it works
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/voice-studio-dark.png">
+  <img src="docs/diagrams/voice-studio-light.png" alt="One spoken turn: your microphone feeds local Nemotron speech recognition; text goes to a reasoning model you pick (local by default, cloud opt-in, only text crosses the boundary); local Qwen3-TTS replies in your enrolled voice. LiveKit carries audio and text between the browser and the agent.">
+</picture>
+
+<sub>Editable source: [`docs/diagrams/voice-studio.drawio`](docs/diagrams/voice-studio.drawio). The 4.07 s figure is one synthetic observation, not a benchmark.</sub>
+
 ## Choose your setup
 
 Each component has a separate job. Choosing a cloud language model does not move
