@@ -31,7 +31,7 @@ normalization/crossfade are not disabled by this adapter.
 
 Ten samples are exploratory, not release evidence. Use at least 30 measured turns
 per reference setup for proposed release gates, and approve numeric limits before
-evaluation. The proposed BUILD.md thresholds are not approved or achieved claims.
+evaluation. Any proposed thresholds are not approved or achieved claims.
 
 ## Separate real-room gates
 

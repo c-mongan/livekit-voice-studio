@@ -123,7 +123,7 @@ worker with a managed deployment without uploading private voice assets.
 **Evidence:** explain how a request finds the named agent, which machine runs it,
 what happens when no worker is available, and which services consume allowance.
 An offline factory test proves wiring; a successful Cloud session proves more.
-Keep those claims separate in a portfolio or interview.
+Keep those claims separate in a write-up or interview.
 
 ## A useful Developer Success exercise
 

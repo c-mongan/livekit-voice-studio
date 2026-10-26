@@ -15,8 +15,7 @@ Prior synthetic tests exercised local/cloud combinations, interruption and
 follow-ups. A newer all-local run reported a full input buffer under high
 memory pressure before its first reply. This remains a developer preview with
 an unresolved reliability issue; no single successful run is a latency guarantee.
-See the [current validation record](validation-2026-09-19.md) and
-[earlier component evidence](superpowers/verification-2026-09-19-components.md).
+See the [current validation record](validation-2026-09-19.md).
 
 ## Release checks
 

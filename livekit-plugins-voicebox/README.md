@@ -34,4 +34,4 @@ and hosted STT/LLM providers have their own data flows. The plugin sanitizes ser
 errors, but Voicebox and LiveKit tracing may log text. Only use authorized voices.
 Correct audio does not verify speaker identity, room playback or conversation
 latency. See the checkout's README, COMPATIBILITY.md, examples, benchmarks and
-reviewed BUILD.md for usage and evidence.
+docs for usage and evidence.

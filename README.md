@@ -7,7 +7,28 @@ Run the whole voice pipeline on your Mac, or switch individual components to
 cloud services. Explore LiveKit rooms, speech, interruption and recovery through
 a working app—with setup checks and troubleshooting exercises built in.
 
-<!-- portfolio-video:start -->
+> **Development preview:** MIT-licensed, single-user, and tested on Apple Silicon.
+> The local voice path uses Qwen directly through MLX Audio. You do not need the
+> separate Voicebox app. Models and dependencies have their own licenses.
+
+## Quickstart
+
+Requires an **Apple Silicon Mac with 16 GB RAM**, Python 3.12, Node.js 22.12+ and
+[uv](https://docs.astral.sh/uv/). First install LiveKit, Ollama, Qwen weights and
+the native recognizer with the [first-run guide](docs/quickstart.md); downloads
+are explicit, and opening Studio never installs models. Then:
+
+```sh
+./studio doctor        # check configuration without loading models
+./studio start --open  # open Studio in your browser
+```
+
+Record 5-30 seconds of a voice you own or have permission to use, audition new
+text, then start a session and type or turn on the microphone.
+
+![Voice Studio with local routing, conversation controls and pipeline details](docs/studio-local.jpg)
+
+<!-- video:start -->
 
 ## Short video overview
 
@@ -15,17 +36,17 @@ a working app—with setup checks and troubleshooting exercises built in.
 
 [![Watch the 22-second video overview](docs/portfolio-video/poster.jpg)](https://github.com/c-mongan/livekit-voice-studio/releases/tag/portfolio-overview-2026-10-23)
 
-[Watch on GitHub](https://github.com/c-mongan/livekit-voice-studio/releases/tag/portfolio-overview-2026-10-23) · [Download MP4](https://github.com/c-mongan/livekit-voice-studio/releases/download/portfolio-overview-2026-10-23/voice.mp4) · [Transcript](docs/portfolio-video/transcript.txt) · [Captions](docs/portfolio-video/captions.srt) · [Credits and source notes](docs/portfolio-video/README.md)
-<!-- portfolio-video:end -->
+[Watch on GitHub](https://github.com/c-mongan/livekit-voice-studio/releases/tag/portfolio-overview-2026-10-23) · [Download MP4](https://github.com/c-mongan/livekit-voice-studio/releases/download/portfolio-overview-2026-10-23/voice.mp4) · [Credits and transcript](docs/portfolio-video/README.md)
+<!-- video:end -->
 
-![Voice Studio with local routing, conversation controls and pipeline details](docs/studio-local.jpg)
+## How it works
 
-[Get started](docs/quickstart.md) · [Choose local or cloud](#choose-your-setup) ·
-[See the demo](docs/demo.md) · [Learn LiveKit](docs/learn-livekit.md)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/voice-studio-dark.png">
+  <img src="docs/diagrams/voice-studio-light.png" alt="One spoken turn: your microphone feeds local Nemotron speech recognition; text goes to a reasoning model you pick (local by default, cloud opt-in, only text crosses the boundary); local Qwen3-TTS replies in your enrolled voice. LiveKit carries audio and text between the browser and the agent.">
+</picture>
 
-> **Development preview:** MIT-licensed, single-user, and tested on Apple Silicon.
-> The local voice path uses Qwen directly through MLX Audio. You do not need the
-> separate Voicebox app. Models and dependencies have their own licenses.
+<sub>Editable source: [`docs/diagrams/voice-studio.drawio`](docs/diagrams/voice-studio.drawio). The 4.07 s figure is one synthetic observation, not a benchmark.</sub>
 
 ## Choose your setup
 
@@ -153,7 +174,7 @@ It uses stock voices and does not upload your private voice reference.
 ## Reliability and known limits
 
 The [evaluation guide](docs/evaluation.md) provides repeatable tests, including
-opt-in synthetic speech checks. [Measured results](docs/provider-recovery-2026-09-19.md)
+opt-in synthetic speech checks. [Measured results](docs/history/provider-recovery-2026-09-19.md)
 and [preview limitations](docs/preview-release.md) distinguish checks from claims.
 
 - The first reply has a three-second LiveKit echo-cancellation warm-up. Spoken
@@ -168,6 +189,13 @@ and [preview limitations](docs/preview-release.md) distinguish checks from claim
 See [troubleshooting](docs/troubleshooting.md), the [listening checklist](docs/voice-quality.md)
 and [platform compatibility](COMPATIBILITY.md). Expressive cloned speech remains
 an [experiment](docs/expressive-experiment.md), not a promised feature.
+
+## Documentation
+
+- Setup: [first-run guide](docs/quickstart.md) · [agent quickstart](docs/agent-quickstart.md) · [launching and recovery](docs/launching.md) · [troubleshooting](docs/troubleshooting.md)
+- Using Studio: [demo](docs/demo.md) · [read-aloud](docs/read-aloud.md) · [voice quality](docs/voice-quality.md)
+- Learning: [Learn LiveKit](docs/learn-livekit.md) · [cloud learning](docs/cloud-learning.md)
+- Reference: [architecture](docs/architecture.md) · [providers](docs/agent-providers.md) · [evaluation](docs/evaluation.md) · [validation history](docs/validation-history.md) · [provider recovery record](docs/history/provider-recovery-2026-09-19.md)
 
 ## Contribute
 
