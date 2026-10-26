@@ -18,7 +18,10 @@ jobs:
       - run: uv run --no-sync pytest -m "not integration" --cov=livekit.plugins.voicebox
       - name: Audit Python dependencies
         if: matrix.python == '3.12'
-        run: uvx pip-audit==2.10.1 --path .venv/lib/python3.12/site-packages
+        # CVE-2026-114603 (opentelemetry-api tracestate ReDoS) is fixed in 1.45.1, but
+        # livekit-agents 1.8.1 requires opentelemetry-api<1.45. Remove the ignore when
+        # livekit-agents allows 1.45+. The studio does not parse inbound tracestate headers.
+        run: uvx pip-audit==2.10.1 --ignore-vuln CVE-2026-114603 --path .venv/lib/python3.12/site-packages
       - run: uv build --package livekit-plugins-voicebox
       - run: uv run --no-sync python examples/minimal_agent.py --help
       - run: uv run --no-sync python benchmarks/benchmark_tts.py --help
